@@ -5,7 +5,12 @@ const MenuItemSchema = new mongoose.Schema({
   categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
   name: { type: String, required: true },
   description: { type: String },
-  price: { type: Number, required: true },
+  price: { type: Number },
+  hasVariants: { type: Boolean, default: false },
+  variants: [{
+    name: { type: String },
+    price: { type: Number }
+  }],
   image: { type: String }, // Uploaded photo local path / url
   tags: [{ type: String, enum: ['Veg', 'Non-Veg', 'Vegan'] }],
   inStock: { type: Boolean, default: true },

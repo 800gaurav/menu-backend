@@ -256,4 +256,77 @@ router.post('/impersonate/:restaurantId', async (req, res) => {
   }
 });
 
+// Plans CRUD
+const Plan = require('../models/Plan');
+
+// GET /api/superadmin/plans
+router.get('/plans', async (req, res) => {
+  try {
+    const plans = await Plan.find().sort({ price: 1 });
+    res.json(plans);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST /api/superadmin/plans
+router.post('/plans', async (req, res) => {
+  const { name, price, billingCycle, features } = req.body;
+  try {
+    const existing = await Plan.findOne({ name });
+    if (existing) {
+      return res.status(400).json({ message: 'Plan name already exists' });
+    }
+
+    const plan = new Plan({
+      name,
+      price,
+      billingCycle,
+      features
+    });
+
+    await plan.save();
+    res.status(201).json(plan);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// PUT /api/superadmin/plans/:id
+router.put('/plans/:id', async (req, res) => {
+  const { name, price, billingCycle, features } = req.body;
+  try {
+    const plan = await Plan.findById(req.params.id);
+    if (!plan) {
+      return res.status(404).json({ message: 'Plan not found' });
+    }
+
+    if (name) plan.name = name;
+    if (price !== undefined) plan.price = price;
+    if (billingCycle) plan.billingCycle = billingCycle;
+    
+    if (features) {
+      plan.features = { ...plan.features.toObject(), ...features };
+    }
+
+    await plan.save();
+    res.json(plan);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// DELETE /api/superadmin/plans/:id
+router.delete('/plans/:id', async (req, res) => {
+  try {
+    const plan = await Plan.findByIdAndDelete(req.params.id);
+    if (!plan) {
+      return res.status(404).json({ message: 'Plan not found' });
+    }
+    res.json({ message: 'Plan deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;

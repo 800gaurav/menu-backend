@@ -11,9 +11,15 @@ const OrderSchema = new mongoose.Schema({
     name: { type: String, required: true },
     price: { type: Number, required: true },
     quantity: { type: Number, required: true },
+    variantName: { type: String },
     specialInstructions: { type: String }
   }],
+  placedBy: { type: String, enum: ['customer', 'waiter'], default: 'customer' },
+  waiterId: { type: mongoose.Schema.Types.ObjectId, ref: 'RestaurantAdmin' },
+  subtotal: { type: Number },
+  taxAmount: { type: Number },
   totalAmount: { type: Number, required: true },
+  paymentStatus: { type: String, enum: ['Unpaid', 'Paid'], default: 'Unpaid' },
   status: {
     type: String,
     enum: ['New', 'Accepted', 'Preparing', 'Ready', 'Served', 'Completed', 'Cancelled'],

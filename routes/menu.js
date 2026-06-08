@@ -5,7 +5,7 @@ const MenuItem = require('../models/MenuItem');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Protect all routes here
-router.use(authenticate, authorize('restaurantadmin'));
+router.use(authenticate, authorize(['restaurantadmin', 'waiter', 'kitchen', 'counter']));
 
 // --- Categories Routes ---
 

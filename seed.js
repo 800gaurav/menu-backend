@@ -7,6 +7,8 @@ const Category = require('./models/Category');
 const MenuItem = require('./models/MenuItem');
 const TableOrRoom = require('./models/TableOrRoom');
 const Order = require('./models/Order');
+const Plan = require('./models/Plan');
+const WaiterCall = require('./models/WaiterCall');
 
 const mongoURI = 'mongodb://localhost:27017/stitch_digital_menu';
 
@@ -23,6 +25,8 @@ async function seed() {
     await MenuItem.deleteMany({});
     await TableOrRoom.deleteMany({});
     await Order.deleteMany({});
+    await Plan.deleteMany({});
+    await WaiterCall.deleteMany({});
     console.log('Cleared existing data.');
 
     // 2. Create SuperAdmin
@@ -35,6 +39,94 @@ async function seed() {
     await superAdmin.save();
     console.log('Super Admin seeded: superadmin@platform.com / admin123');
 
+    // 2.5 Seed Subscription Plans
+    const plansData = [
+      {
+        name: 'Free',
+        price: 0,
+        features: {
+          tableOrdering: true,
+          roomOrdering: false,
+          selfCheckout: true,
+          kitchenPanel: false,
+          counterPanel: false,
+          waiterPanel: false,
+          customerLogin: false,
+          qrGenerator: true,
+          analytics: false,
+          maxTables: 3,
+          maxMenuItems: 15,
+          maxCategories: 5
+        }
+      },
+      {
+        name: 'Starter',
+        price: 999,
+        features: {
+          tableOrdering: true,
+          roomOrdering: true,
+          selfCheckout: true,
+          kitchenPanel: true,
+          counterPanel: true,
+          waiterPanel: false,
+          customerLogin: false,
+          qrGenerator: true,
+          analytics: true,
+          maxTables: 10,
+          maxMenuItems: 50,
+          maxCategories: 10
+        }
+      },
+      {
+        name: 'Professional',
+        price: 2499,
+        features: {
+          tableOrdering: true,
+          roomOrdering: true,
+          selfCheckout: true,
+          kitchenPanel: true,
+          counterPanel: true,
+          waiterPanel: true,
+          customerLogin: true,
+          qrGenerator: true,
+          analytics: true,
+          maxTables: 30,
+          maxMenuItems: 150,
+          maxCategories: 20
+        }
+      },
+      {
+        name: 'Enterprise',
+        price: 4999,
+        features: {
+          tableOrdering: true,
+          roomOrdering: true,
+          selfCheckout: true,
+          kitchenPanel: true,
+          counterPanel: true,
+          waiterPanel: true,
+          customerLogin: true,
+          qrGenerator: true,
+          analytics: true,
+          maxTables: 100,
+          maxMenuItems: 500,
+          maxCategories: 50
+        }
+      }
+    ];
+
+    const seededPlans = [];
+    for (const planData of plansData) {
+      const plan = new Plan(planData);
+      await plan.save();
+      seededPlans.push(plan);
+    }
+    console.log('Subscription Plans seeded.');
+
+    const enterprisePlan = seededPlans.find(p => p.name === 'Enterprise');
+    const professionalPlan = seededPlans.find(p => p.name === 'Professional');
+    const starterPlan = seededPlans.find(p => p.name === 'Starter');
+
     // 3. Create Spice Garden Restaurant
     const spiceGarden = new Restaurant({
       name: 'Spice Garden',
@@ -46,14 +138,24 @@ async function seed() {
       brandColor: '#003b1b',
       googleMapsLink: 'https://maps.google.com',
       reviewLink: 'https://search.google.com/local/writereview',
-      package: 'Premium',
+      package: 'Professional',
       isActive: true,
-      features: {
-        tableOrdering: true,
-        roomOrdering: true,
-        selfCheckout: true,
-        kitchenPanel: true
+      planId: professionalPlan._id,
+      plan: {
+        name: professionalPlan.name,
+        maxTables: professionalPlan.features.maxTables,
+        maxMenuItems: professionalPlan.features.maxMenuItems,
+        price: professionalPlan.price,
+        billingCycle: 'monthly',
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       },
+      pins: {
+        kitchen: '1111',
+        counter: '2222',
+        waiter: '3333'
+      },
+      features: professionalPlan.features,
       brandingSettings: {
         tagline: 'Spice Garden - Indian Culinary Excellence',
         pwaName: 'Spice Garden Menu',
@@ -94,12 +196,22 @@ async function seed() {
       logo: '',
       brandColor: '#7C3AED',
       isActive: true,
-      features: {
-        tableOrdering: true,
-        roomOrdering: true,
-        selfCheckout: true,
-        kitchenPanel: true
+      planId: starterPlan._id,
+      plan: {
+        name: starterPlan.name,
+        maxTables: starterPlan.features.maxTables,
+        maxMenuItems: starterPlan.features.maxMenuItems,
+        price: starterPlan.price,
+        billingCycle: 'monthly',
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       },
+      pins: {
+        kitchen: '1111',
+        counter: '2222',
+        waiter: '3333'
+      },
+      features: starterPlan.features,
       brandingSettings: {
         tagline: 'Luxury Dine & Stay',
         pwaName: 'Palace Menu',

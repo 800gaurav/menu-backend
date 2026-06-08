@@ -84,4 +84,46 @@ router.post('/restaurant/login', async (req, res) => {
   }
 });
 
+// POST /api/auth/pin-login
+router.post('/pin-login', async (req, res) => {
+  const { slug, role, pin } = req.body;
+  try {
+    if (!['kitchen', 'counter', 'waiter'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role for PIN login' });
+    }
+    const restaurant = await Restaurant.findOne({ slug });
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found' });
+    }
+    
+    // Check if the pin matches the configured pin
+    const configuredPin = restaurant.pins ? restaurant.pins[role] : null;
+    const defaultPins = { kitchen: '1111', counter: '2222', waiter: '3333' };
+    const targetPin = configuredPin || defaultPins[role];
+
+    if (pin !== targetPin) {
+      return res.status(401).json({ message: 'Invalid PIN' });
+    }
+
+    const token = jwt.sign(
+      { 
+        role: role, 
+        restaurantId: restaurant._id,
+        restaurantSlug: restaurant.slug
+      },
+      JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    res.json({ 
+      token, 
+      role, 
+      restaurantId: restaurant._id,
+      restaurantSlug: restaurant.slug
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;

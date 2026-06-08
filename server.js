@@ -79,6 +79,9 @@ const orderRoutes = require('./routes/orders');
 const customerRoutes = require('./routes/customer');
 const crmRoutes = require('./routes/crm');
 const analyticsRoutes = require('./routes/analytics');
+const waiterRoutes = require('./routes/waiter');
+const counterRoutes = require('./routes/counter');
+const manifestRoutes = require('./routes/manifest');
 
 // Mount Routes
 app.use('/api/auth', authRoutes);
@@ -90,6 +93,9 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/crm', crmRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/waiter', waiterRoutes);
+app.use('/api/counter', counterRoutes);
+app.use('/api/manifest', manifestRoutes);
 
 // Health Check
 app.get('/api/health', (req, res) => {

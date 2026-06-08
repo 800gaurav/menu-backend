@@ -6,7 +6,7 @@ const Restaurant = require('../models/Restaurant');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Protect all routes here
-router.use(authenticate, authorize('restaurantadmin'));
+router.use(authenticate, authorize(['restaurantadmin', 'waiter', 'kitchen', 'counter']));
 
 // Helper function to generate QR data URL
 function targetFor(restaurantSlug, name, type) {

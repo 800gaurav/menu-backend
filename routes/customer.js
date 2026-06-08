@@ -113,14 +113,28 @@ router.post('/orders', async (req, res) => {
         return res.status(400).json({ message: `Item "${dbItem.name}" is currently out of stock` });
       }
 
-      const itemCost = dbItem.price * item.quantity;
+      let itemPrice = dbItem.price;
+      
+      if (item.variantName && dbItem.hasVariants && dbItem.variants && dbItem.variants.length > 0) {
+        const variant = dbItem.variants.find(v => v.name === item.variantName);
+        if (variant) {
+          itemPrice = variant.price;
+        } else {
+          return res.status(400).json({ message: `Variant "${item.variantName}" not found for item "${dbItem.name}"` });
+        }
+      } else if (dbItem.hasVariants && dbItem.variants && dbItem.variants.length > 0) {
+        itemPrice = dbItem.variants[0].price;
+      }
+
+      const itemCost = itemPrice * item.quantity;
       totalAmount += itemCost;
 
       compiledItems.push({
         menuItemId: dbItem._id,
         name: dbItem.name,
-        price: dbItem.price,
+        price: itemPrice,
         quantity: item.quantity,
+        variantName: item.variantName || '',
         specialInstructions: item.specialInstructions || ''
       });
     }
@@ -194,6 +208,21 @@ router.post('/orders', async (req, res) => {
   }
 });
 
+// GET /api/customer/orders/batch
+router.get('/orders/batch', async (req, res) => {
+  const { ids } = req.query;
+  try {
+    if (!ids) {
+      return res.json([]);
+    }
+    const orderIds = ids.split(',').filter(Boolean);
+    const orders = await Order.find({ _id: { $in: orderIds } }).sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // GET /api/customer/orders/:orderId
 router.get('/orders/:orderId', async (req, res) => {
   try {
@@ -209,6 +238,56 @@ router.get('/orders/:orderId', async (req, res) => {
       order,
       restaurant
     });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST /api/customer/call-waiter
+const WaiterCall = require('../models/WaiterCall');
+router.post('/call-waiter', async (req, res) => {
+  const { slug, tableOrRoomName } = req.body;
+  try {
+    const restaurant = await Restaurant.findOne({ slug });
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found' });
+    }
+
+    let tableObj = await TableOrRoom.findOne({
+      restaurantId: restaurant._id,
+      name: tableOrRoomName
+    });
+
+    if (!tableObj) {
+      // Fallback
+      tableObj = new TableOrRoom({
+        restaurantId: restaurant._id,
+        name: tableOrRoomName,
+        type: 'Table',
+        isActive: true
+      });
+      await tableObj.save();
+    }
+
+    const waiterCall = new WaiterCall({
+      restaurantId: restaurant._id,
+      tableOrRoomId: tableObj._id,
+      tableLabel: tableObj.name,
+      calledAt: new Date(),
+      isAttended: false
+    });
+
+    await waiterCall.save();
+
+    // Socket alert
+    const io = req.app.get('io');
+    if (io) {
+      const restRoom = restaurant._id.toString();
+      io.to(restRoom).emit('waiterCalled', waiterCall);
+      io.to(`${restRoom}_kitchen`).emit('waiterCalled', waiterCall);
+    }
+
+    res.status(201).json(waiterCall);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

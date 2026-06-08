@@ -4,7 +4,7 @@ const Order = require('../models/Order');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Protect all routes here
-router.use(authenticate, authorize('restaurantadmin'));
+router.use(authenticate, authorize(['restaurantadmin', 'kitchen', 'counter', 'waiter']));
 
 // GET /api/orders
 router.get('/', async (req, res) => {
@@ -141,6 +141,32 @@ router.patch('/:id/bill-request', async (req, res) => {
     if (!order) return res.status(404).json({ message: 'Order not found' });
     order.billRequested = true;
     await order.save();
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// PATCH /api/orders/:id/payment
+router.patch('/:id/payment', async (req, res) => {
+  const { paymentStatus } = req.body;
+  try {
+    if (!['Unpaid', 'Paid'].includes(paymentStatus)) {
+      return res.status(400).json({ message: 'Invalid payment status' });
+    }
+    const order = await Order.findOne({ _id: req.params.id, restaurantId: req.user.restaurantId });
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    order.paymentStatus = paymentStatus;
+    await order.save();
+
+    // Trigger Socket.IO updates
+    const io = req.app.get('io');
+    if (io) {
+      const restRoom = req.user.restaurantId.toString();
+      io.to(restRoom).emit('orderUpdated', order);
+      io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
+      io.to(order._id.toString()).emit('orderStatusChanged', order);
+    }
     res.json(order);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

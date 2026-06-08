@@ -14,14 +14,35 @@ const RestaurantSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true },
   
   // Plan & Subscription
+  planId: { type: mongoose.Schema.Types.ObjectId, ref: 'Plan' },
   plan: {
-    name: { type: String, default: 'Starter', enum: ['Starter', 'Professional', 'Enterprise'] },
+    name: { type: String, default: 'Starter' },
     maxTables: { type: Number, default: 10 },
     maxMenuItems: { type: Number, default: 50 },
     price: { type: Number, default: 0 },
     billingCycle: { type: String, default: 'monthly', enum: ['monthly', 'yearly'] },
     startDate: { type: Date },
     endDate: { type: Date }
+  },
+  
+  featureOverrides: {
+    tableOrdering: { type: Boolean },
+    roomOrdering: { type: Boolean },
+    selfCheckout: { type: Boolean },
+    kitchenPanel: { type: Boolean },
+    counterPanel: { type: Boolean },
+    waiterPanel: { type: Boolean },
+    customerLogin: { type: Boolean },
+    qrGenerator: { type: Boolean },
+    analytics: { type: Boolean }
+  },
+
+  orderFlowMode: { type: String, enum: ['menuOnly', 'checkoutView', 'fullDigital'], default: 'fullDigital' },
+  
+  pins: {
+    kitchen: { type: String, default: '1111' },
+    counter: { type: String, default: '2222' },
+    waiter: { type: String, default: '3333' }
   },
 
   // Feature Toggles (Super Admin controls)
@@ -30,6 +51,8 @@ const RestaurantSchema = new mongoose.Schema({
     roomOrdering: { type: Boolean, default: true },
     selfCheckout: { type: Boolean, default: true },
     kitchenPanel: { type: Boolean, default: true },
+    counterPanel: { type: Boolean, default: true },
+    waiterPanel: { type: Boolean, default: true },
     customerLogin: { type: Boolean, default: false },
     qrGenerator: { type: Boolean, default: true },
     customerDataCollection: { type: Boolean, default: false },
