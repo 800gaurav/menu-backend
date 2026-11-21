@@ -11,10 +11,75 @@ router.get('/orders', async (req, res) => {
   try {
     const orders = await Order.find({
       restaurantId: req.user.restaurantId,
-      status: { $ne: 'Completed', $nin: ['Cancelled'] }
-    }).sort({ billRequested: -1, createdAt: -1 });
+      status: 'Served'
+    }).populate('customerId').populate('waiterId').sort({ billRequested: -1, createdAt: -1 });
+
+    const grouped = {};
+    for (const ord of orders) {
+      const table = ord.tableName;
+      if (!grouped[table]) {
+        grouped[table] = {
+          _id: ord._id,
+          orderIds: [ord._id],
+          tableName: table,
+          orderNumber: ord.orderNumber,
+          orderNumbers: [ord.orderNumber],
+          status: 'Served',
+          billRequested: ord.billRequested,
+          customerId: ord.customerId,
+          waiterId: ord.waiterId,
+          items: [],
+          totalAmount: 0,
+          specialInstructions: ord.specialInstructions,
+          placedBy: ord.placedBy,
+          createdAt: ord.createdAt
+        };
+      } else {
+        grouped[table].orderIds.push(ord._id);
+        if (ord.orderNumber && !grouped[table].orderNumbers.includes(ord.orderNumber)) {
+          grouped[table].orderNumbers.push(ord.orderNumber);
+        }
+        if (ord.billRequested) {
+          grouped[table].billRequested = true;
+        }
+        if (!grouped[table].customerId && ord.customerId) {
+          grouped[table].customerId = ord.customerId;
+        }
+        if (ord.specialInstructions) {
+          if (grouped[table].specialInstructions) {
+            grouped[table].specialInstructions += ` | ${ord.specialInstructions}`;
+          } else {
+            grouped[table].specialInstructions = ord.specialInstructions;
+          }
+        }
+      }
+
+      for (const it of ord.items) {
+        const existingItem = grouped[table].items.find(
+          item => item.name === it.name && item.variantName === it.variantName
+        );
+        if (existingItem) {
+          existingItem.quantity += it.quantity;
+        } else {
+          grouped[table].items.push({
+            name: it.name,
+            variantName: it.variantName,
+            quantity: it.quantity,
+            price: it.price
+          });
+        }
+      }
+
+      grouped[table].totalAmount += ord.totalAmount;
+    }
+
+    const result = Object.values(grouped).map(g => {
+      g.orderNumber = g.orderNumbers.filter(Boolean).join(', ');
+      delete g.orderNumbers;
+      return g;
+    });
     
-    res.json(orders);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -23,30 +88,49 @@ router.get('/orders', async (req, res) => {
 // POST /api/counter/orders/:id/complete - Settle bill and mark as Completed
 router.post('/orders/:id/complete', async (req, res) => {
   try {
-    const order = await Order.findOne({
+    const mainOrder = await Order.findOne({
       _id: req.params.id,
       restaurantId: req.user.restaurantId
     });
 
-    if (!order) {
+    if (!mainOrder) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    order.status = 'Completed';
-    order.completedAt = new Date();
-    order.statusTimeline.push({ status: 'Completed', timestamp: new Date() });
-    await order.save();
+    const tableOrders = await Order.find({
+      restaurantId: req.user.restaurantId,
+      tableName: mainOrder.tableName,
+      status: 'Served'
+    });
 
-    // Trigger Socket.IO updates
+    const allOrdersToComplete = [mainOrder, ...tableOrders.filter(o => o._id.toString() !== mainOrder._id.toString())];
+
     const io = req.app.get('io');
-    if (io) {
-      const restRoom = req.user.restaurantId.toString();
-      io.to(restRoom).emit('orderUpdated', order);
-      io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
-      io.to(order._id.toString()).emit('orderStatusChanged', order);
+    const restRoom = req.user.restaurantId.toString();
+
+    const Customer = require('../models/Customer');
+    for (const order of allOrdersToComplete) {
+      order.status = 'Completed';
+      order.completedAt = new Date();
+      order.paymentStatus = 'Paid';
+      order.statusTimeline.push({ status: 'Completed', timestamp: new Date() });
+      await order.save();
+
+      if (order.customerId) {
+        await Customer.findByIdAndUpdate(order.customerId, {
+          $inc: { totalSpend: order.totalAmount },
+          $set: { lastVisitAt: order.completedAt }
+        });
+      }
+
+      if (io) {
+        io.to(restRoom).emit('orderUpdated', order);
+        io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
+        io.to(order._id.toString()).emit('orderStatusChanged', order);
+      }
     }
 
-    res.json(order);
+    res.json({ message: 'Table settled successfully', completedCount: allOrdersToComplete.length });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

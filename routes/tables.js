@@ -10,7 +10,7 @@ router.use(authenticate, authorize(['restaurantadmin', 'waiter', 'kitchen', 'cou
 
 // Helper function to generate QR data URL
 function targetFor(restaurantSlug, name, type) {
-  const host = process.env.CLIENT_HOST || 'http://localhost:5173';
+  const host = process.env.CLIENT_HOST;
   const map = {
     Room: `${host}/menu/${restaurantSlug}?room=${encodeURIComponent(name)}&qrType=Room`,
     Table: `${host}/menu/${restaurantSlug}?table=${encodeURIComponent(name)}&qrType=Table`,
@@ -125,6 +125,17 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ message: 'Restaurant not found' });
     }
 
+    // Check maxTables limit from subscription plan
+    const maxTables = restaurant.plan?.maxTables;
+    if (typeof maxTables === 'number' && maxTables > 0) {
+      const currentCount = await TableOrRoom.countDocuments({ restaurantId: restaurant._id });
+      if (currentCount >= maxTables) {
+        return res.status(400).json({
+          message: `Table limit reached (${maxTables} tables). Your current plan "${restaurant.plan?.name || 'Starter'}" allows up to ${maxTables} tables. Please upgrade your subscription plan in Super Admin to add more tables.`
+        });
+      }
+    }
+
     // Check duplicate name
     const existing = await TableOrRoom.findOne({ restaurantId: restaurant._id, name });
     if (existing) {
@@ -186,7 +197,21 @@ router.put('/:id', async (req, res) => {
 router.post('/bulk-qr', async (req, res) => {
   try {
     const restaurant = await Restaurant.findById(req.user.restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found' });
+    }
     const { targets = [] } = req.body;
+
+    const maxTables = restaurant.plan?.maxTables;
+    if (typeof maxTables === 'number' && maxTables > 0) {
+      const currentCount = await TableOrRoom.countDocuments({ restaurantId: restaurant._id });
+      if (currentCount + targets.length > maxTables) {
+        return res.status(400).json({
+          message: `Cannot add ${targets.length} tables/QR codes. Your plan allows max ${maxTables} tables (currently using ${currentCount}). Please contact Super Admin to upgrade your plan.`
+        });
+      }
+    }
+
     const created = [];
     for (const target of targets) {
       const name = target.name || target.type;

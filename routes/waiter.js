@@ -33,6 +33,7 @@ router.get('/tables', async (req, res) => {
         qrCodeData: table.qrCodeData,
         status: activeOrder ? 'Occupied' : 'Free',
         activeOrderId: activeOrder ? activeOrder._id : null,
+        activeOrderStatus: activeOrder ? activeOrder.status : null,
         activeOrderAmount: activeOrder ? activeOrder.totalAmount : 0
       });
     }
@@ -69,13 +70,24 @@ router.post('/orders', async (req, res) => {
         return res.status(400).json({ message: `Item "${dbItem.name}" is out of stock` });
       }
 
-      const itemCost = dbItem.price * item.quantity;
+      let itemPrice = dbItem.price;
+      if (item.variantName && dbItem.hasVariants && dbItem.variants && dbItem.variants.length > 0) {
+        const foundVariant = dbItem.variants.find(v => v.name === item.variantName);
+        if (foundVariant) {
+          itemPrice = foundVariant.price;
+        }
+      } else if (dbItem.hasVariants && dbItem.variants && dbItem.variants.length > 0) {
+        itemPrice = dbItem.variants[0].price;
+      }
+
+      const itemCost = itemPrice * item.quantity;
       subtotal += itemCost;
 
       compiledItems.push({
         menuItemId: dbItem._id,
         name: dbItem.name,
-        price: dbItem.price,
+        variantName: item.variantName || '',
+        price: itemPrice,
         quantity: item.quantity,
         specialInstructions: item.specialInstructions || ''
       });
@@ -113,7 +125,19 @@ router.post('/orders', async (req, res) => {
       const restRoom = restaurant._id.toString();
       io.to(restRoom).emit('orderCreated', savedOrder);
       io.to(`${restRoom}_kitchen`).emit('orderCreated', savedOrder);
+      io.to(restRoom).emit('new-order', savedOrder);
+      io.to(`${restRoom}_kitchen`).emit('new-order', savedOrder);
     }
+
+    // Trigger FCM Push Notifications
+    const { notifyRestaurantRoles } = require('../utils/firebase');
+    notifyRestaurantRoles(
+      restaurant._id,
+      ['restaurantadmin', 'kitchen'],
+      'New Order Placed!',
+      `Waiter ${req.user.waiterName || 'Staff'} placed a new order for ${table.name} (${savedOrder.orderNumber}).`,
+      { orderId: savedOrder._id.toString(), type: 'new_order_waiter' }
+    ).catch(err => console.error('Error waiter order FCM:', err));
 
     res.status(201).json(savedOrder);
   } catch (error) {

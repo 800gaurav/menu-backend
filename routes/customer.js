@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+const { JWT_SECRET } = require('../middleware/auth');
 const Restaurant = require('../models/Restaurant');
 const Category = require('../models/Category');
 const MenuItem = require('../models/MenuItem');
@@ -46,6 +48,44 @@ router.get('/menu/:slug', async (req, res) => {
       categories,
       items
     });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST /api/customer/auth
+router.post('/auth', async (req, res) => {
+  const { name, mobile, slug } = req.body;
+  try {
+    const restaurant = await Restaurant.findOne({ slug });
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found' });
+    }
+    if (!mobile) {
+      return res.status(400).json({ message: 'Mobile number is required' });
+    }
+
+    let customerRecord = await Customer.findOne({ restaurantId: restaurant._id, mobile });
+    if (!customerRecord) {
+      customerRecord = new Customer({
+        restaurantId: restaurant._id,
+        name: name || 'Guest Customer',
+        mobile,
+        firstVisitAt: new Date()
+      });
+    } else {
+      if (name) customerRecord.name = name;
+    }
+    customerRecord.lastVisitAt = new Date();
+    await customerRecord.save();
+
+    const token = jwt.sign(
+      { id: customerRecord._id, name: customerRecord.name, mobile: customerRecord.mobile, role: 'customer' },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({ token, customer: customerRecord });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -126,15 +166,29 @@ router.post('/orders', async (req, res) => {
         itemPrice = dbItem.variants[0].price;
       }
 
-      const itemCost = itemPrice * item.quantity;
+      // Add topping / addons pricing
+      let addonsPrice = 0;
+      const compiledAddons = [];
+      if (item.addons && item.addons.length > 0 && dbItem.addons) {
+        for (let add of item.addons) {
+          const dbAddon = dbItem.addons.find(a => a.name === add.name);
+          if (dbAddon) {
+            addonsPrice += dbAddon.price;
+            compiledAddons.push({ name: dbAddon.name, price: dbAddon.price });
+          }
+        }
+      }
+
+      const itemCost = (itemPrice + addonsPrice) * item.quantity;
       totalAmount += itemCost;
 
       compiledItems.push({
         menuItemId: dbItem._id,
         name: dbItem.name,
-        price: itemPrice,
+        price: itemPrice + addonsPrice,
         quantity: item.quantity,
         variantName: item.variantName || '',
+        addons: compiledAddons,
         specialInstructions: item.specialInstructions || ''
       });
     }
@@ -143,40 +197,47 @@ router.post('/orders', async (req, res) => {
     const count = await Order.countDocuments({ restaurantId: restaurant._id });
     const orderNumber = `ORD-${Date.now().toString().slice(-4)}-${count + 1}`;
 
+    // 5. Try identifying customer from JWT auth header
     let customerRecord = null;
-    if (restaurant.features.customerDataCollection && restaurant.customerDataSettings?.enabled) {
-      const fields = restaurant.customerDataSettings.fields || {};
-      for (const [fieldName, cfg] of Object.entries(fields)) {
-        if (cfg.enabled && cfg.required && !customer[fieldName]) {
-          return res.status(400).json({ message: `${fieldName} is required before placing an order` });
+    let authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+        if (decoded && decoded.role === 'customer') {
+          customerRecord = await Customer.findOne({ _id: decoded.id, restaurantId: restaurant._id });
         }
+      } catch (err) {
+        console.error("JWT verification failed for customer placement:", err);
       }
-
-      const lookup = {
-        restaurantId: restaurant._id,
-        $or: [
-          customer.mobile ? { mobile: customer.mobile } : null,
-          customer.email ? { email: customer.email } : null
-        ].filter(Boolean)
-      };
-
-      if (lookup.$or.length) {
-        customerRecord = await Customer.findOne(lookup);
-      }
-      if (!customerRecord) {
-        customerRecord = new Customer({ restaurantId: restaurant._id, firstVisitAt: new Date() });
-      }
-
-      ['name', 'mobile', 'email', 'dateOfBirth', 'anniversaryDate'].forEach((field) => {
-        if (customer[field] !== undefined && customer[field] !== '') customerRecord[field] = customer[field];
-      });
-      customerRecord.visitCount += 1;
-      customerRecord.totalSpend += totalAmount;
-      customerRecord.lastVisitAt = new Date();
-      await customerRecord.save();
     }
 
-    // 5. Create Order
+    // Fallback: Resolve/Create customer from provided form body
+    if (!customerRecord && (customer.mobile || customer.name)) {
+      const mobile = customer.mobile;
+      if (mobile) {
+        customerRecord = await Customer.findOne({ restaurantId: restaurant._id, mobile });
+        if (!customerRecord) {
+          customerRecord = new Customer({
+            restaurantId: restaurant._id,
+            name: customer.name || 'Guest Customer',
+            mobile,
+            firstVisitAt: new Date()
+          });
+        } else {
+          if (customer.name) customerRecord.name = customer.name;
+        }
+        
+        ['email', 'dateOfBirth', 'anniversaryDate'].forEach((field) => {
+          if (customer[field] !== undefined && customer[field] !== '') customerRecord[field] = customer[field];
+        });
+        customerRecord.visitCount += 1;
+        // totalSpend will be updated once the order is fully settled/completed
+        customerRecord.lastVisitAt = new Date();
+        await customerRecord.save();
+      }
+    }
+
+    // 6. Create Order
     const newOrder = new Order({
       restaurantId: restaurant._id,
       tableOrRoomId: tableObj._id,
@@ -193,16 +254,46 @@ router.post('/orders', async (req, res) => {
 
     const savedOrder = await newOrder.save();
 
-    // 6. Push real-time Socket.IO notifications
+    // 7. Push real-time Socket.IO & FCM notifications
     const io = req.app.get('io');
     if (io) {
       const restRoom = restaurant._id.toString();
       // Notify restaurant admin dashboard & kitchen panel
       io.to(restRoom).emit('orderCreated', savedOrder);
       io.to(`${restRoom}_kitchen`).emit('orderCreated', savedOrder);
+      io.to(restRoom).emit('new-order', savedOrder);
+      io.to(`${restRoom}_kitchen`).emit('new-order', savedOrder);
     }
 
-    res.status(201).json(savedOrder);
+    // Trigger FCM Push Notifications
+    const { notifyRestaurantRoles } = require('../utils/firebase');
+    notifyRestaurantRoles(
+      restaurant._id,
+      ['restaurantadmin', 'kitchen', 'counter'],
+      'New Order Placed!',
+      `Table ${tableObj.name} has placed a new order (${savedOrder.orderNumber}) for ₹${savedOrder.totalAmount}.`,
+      { orderId: savedOrder._id.toString(), type: 'new_order' }
+    ).catch(err => console.error('Error triggering new order FCM:', err));
+
+    // 8. Generate new token if not logged in
+    let customerToken = null;
+    if (customerRecord) {
+      customerToken = jwt.sign(
+        { id: customerRecord._id, name: customerRecord.name, mobile: customerRecord.mobile, role: 'customer' },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+    }
+
+    res.status(201).json({
+      order: savedOrder,
+      customerToken,
+      customer: customerRecord ? {
+        id: customerRecord._id,
+        name: customerRecord.name,
+        mobile: customerRecord.mobile
+      } : null
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -286,6 +377,16 @@ router.post('/call-waiter', async (req, res) => {
       io.to(restRoom).emit('waiterCalled', waiterCall);
       io.to(`${restRoom}_kitchen`).emit('waiterCalled', waiterCall);
     }
+
+    // Trigger FCM Push Notifications
+    const { notifyRestaurantRoles } = require('../utils/firebase');
+    notifyRestaurantRoles(
+      restaurant._id,
+      'waiter',
+      'Waiter Called!',
+      `Table ${tableObj.name} is requesting assistance.`,
+      { callId: waiterCall._id.toString(), type: 'waiter_call' }
+    ).catch(err => console.error('Error waiter call FCM:', err));
 
     res.status(201).json(waiterCall);
   } catch (error) {

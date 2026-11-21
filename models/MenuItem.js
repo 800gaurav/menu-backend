@@ -11,6 +11,10 @@ const MenuItemSchema = new mongoose.Schema({
     name: { type: String },
     price: { type: Number }
   }],
+  addons: [{
+    name: { type: String },
+    price: { type: Number }
+  }],
   image: { type: String }, // Uploaded photo local path / url
   tags: [{ type: String, enum: ['Veg', 'Non-Veg', 'Vegan'] }],
   inStock: { type: Boolean, default: true },

@@ -12,6 +12,10 @@ const OrderSchema = new mongoose.Schema({
     price: { type: Number, required: true },
     quantity: { type: Number, required: true },
     variantName: { type: String },
+    addons: [{
+      name: { type: String },
+      price: { type: Number }
+    }],
     specialInstructions: { type: String }
   }],
   placedBy: { type: String, enum: ['customer', 'waiter'], default: 'customer' },
@@ -37,7 +41,13 @@ const OrderSchema = new mongoose.Schema({
     status: { type: String },
     timestamp: { type: Date, default: Date.now }
   }],
-  specialInstructions: { type: String }
+  specialInstructions: { type: String },
+  servedBy: { type: String }
 }, { timestamps: true });
+
+OrderSchema.index({ restaurantId: 1, createdAt: -1 });
+OrderSchema.index({ restaurantId: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ restaurantId: 1, tableName: 1, createdAt: -1 });
+OrderSchema.index({ restaurantId: 1, orderNumber: 1 });
 
 module.exports = mongoose.model('Order', OrderSchema);

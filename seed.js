@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+require('dotenv').config();
 const SuperAdmin = require('./models/SuperAdmin');
 const Restaurant = require('./models/Restaurant');
 const RestaurantAdmin = require('./models/RestaurantAdmin');
@@ -9,35 +10,36 @@ const TableOrRoom = require('./models/TableOrRoom');
 const Order = require('./models/Order');
 const Plan = require('./models/Plan');
 const WaiterCall = require('./models/WaiterCall');
+const Waiter = require('./models/Waiter');
 
-const mongoURI = 'mongodb://localhost:27017/stitch_digital_menu';
+const mongoURI = process.env.MONGODB_URI;
+const superAdminUsername = process.env.SUPERADMIN_USERNAME;
+const superAdminEmail = process.env.SUPERADMIN_EMAIL;
+const superAdminPassword = process.env.SUPERADMIN_PASSWORD;
+const clientHost = process.env.CLIENT_HOST;
 
 async function seed() {
   try {
+    if (!mongoURI || !superAdminUsername || !superAdminEmail || !superAdminPassword || !clientHost) {
+      throw new Error('MONGODB_URI, SUPERADMIN_USERNAME, SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD, and CLIENT_HOST must be set in backend/.env.');
+    }
+
     await mongoose.connect(mongoURI);
     console.log('Connected to database for seeding...');
 
-    // 1. Clear Collections
-    await SuperAdmin.deleteMany({});
-    await Restaurant.deleteMany({});
-    await RestaurantAdmin.deleteMany({});
-    await Category.deleteMany({});
-    await MenuItem.deleteMany({});
-    await TableOrRoom.deleteMany({});
-    await Order.deleteMany({});
-    await Plan.deleteMany({});
-    await WaiterCall.deleteMany({});
-    console.log('Cleared existing data.');
+    // 1. Drop Database to clear obsolete indices
+    await mongoose.connection.db.dropDatabase();
+    console.log('Cleared existing data (dropped database).');
 
     // 2. Create SuperAdmin
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const hashedPassword = await bcrypt.hash(superAdminPassword, 10);
     const superAdmin = new SuperAdmin({
-      username: 'superadmin',
-      email: 'superadmin@platform.com',
+      username: superAdminUsername,
+      email: superAdminEmail,
       password: hashedPassword
     });
     await superAdmin.save();
-    console.log('Super Admin seeded: superadmin@platform.com / admin123');
+    console.log(`Super Admin seeded: ${superAdminEmail}`);
 
     // 2.5 Seed Subscription Plans
     const plansData = [
@@ -135,6 +137,11 @@ async function seed() {
       phone: '+91 98765 43210',
       address: '12, MG Road, Bangalore',
       logo: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDrux0pk0uqPRsG3h6q3v20yuoLQzKOzN7XxVnr8vY0KgqnAUHAe04jSBQvn2RRuggbnxlKZhfj5_bAUAWTnd2YV7L943NcNgaLAsNZb881qlLlGZ23MC19uciAjyib4UbuW9vE2Qc4TvpQIdMcVX9BPC4lcyXn0bnHA_yfO_GkjlNCvY85uSVkBfQlof8IuyJ6bbn2UDN8ySEuWAXP7jUyYDunuZjeCtr_DM3TZJ7-pby8Nkjv73qAUnpgoM-hWFQ-eUbVg8h7bCg3',
+      banners: [
+        'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&auto=format&fit=crop&q=60',
+        'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600&auto=format&fit=crop&q=60',
+        'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=600&auto=format&fit=crop&q=60'
+      ],
       brandColor: '#003b1b',
       googleMapsLink: 'https://maps.google.com',
       reviewLink: 'https://search.google.com/local/writereview',
@@ -231,9 +238,25 @@ async function seed() {
     await palaceAdmin.save();
     console.log('Hotel Palace Admin seeded (wizard test): hotel_palace_admin / palace123');
 
+    // 5.5 Seed default waiters
+    const waiterRahul = new Waiter({
+      restaurantId: spiceGarden._id,
+      name: 'Rahul Sharma',
+      pin: '3333'
+    });
+    await waiterRahul.save();
+    console.log('Default Spice Garden Waiter seeded: Rahul Sharma / PIN: 3333');
+
+    const waiterAmit = new Waiter({
+      restaurantId: hotelPalace._id,
+      name: 'Amit Kumar',
+      pin: '4444'
+    });
+    await waiterAmit.save();
+
     // 6. Seed Categories for Spice Garden
-    const catNames = ['Starters', 'Main Course', 'Beverages', 'Desserts'];
-    const icons = ['🥗', '🍛', '🥤', '🍨'];
+    const catNames = ['Burgers', 'Pizzas', 'Beverages', 'Desserts'];
+    const icons = ['🍔', '🍕', '🥤', '🍨'];
     const cats = [];
     
     for (let i = 0; i < catNames.length; i++) {
@@ -250,18 +273,28 @@ async function seed() {
     console.log('Spice Garden categories seeded.');
 
     // 7. Seed Menu Items for Spice Garden
-    const startersId = cats[0]._id;
-    const mainId = cats[1]._id;
-    const beverageId = cats[2]._id;
-    const dessertId = cats[3]._id;
+    const startersId = cats[0]._id; // Burgers
+    const mainId = cats[1]._id;     // Pizzas
+    const beverageId = cats[2]._id; // Beverages
+    const dessertId = cats[3]._id;  // Desserts
 
     const items = [
       {
         restaurantId: spiceGarden._id,
         categoryId: startersId,
-        name: 'Paneer Tikka',
-        description: 'Spiced cottage cheese chunks grilled in tandoor',
-        price: 325,
+        name: 'Crispy Veg Burger',
+        description: 'Crispy vegetable patty with fresh lettuce, onions and spicy mayo cream spread.',
+        hasVariants: true,
+        variants: [
+          { name: 'Regular Size', price: 129 },
+          { name: 'Double Cheese Burst', price: 189 },
+          { name: 'Jumbo Double Patty', price: 239 }
+        ],
+        addons: [
+          { name: 'Extra Cheese Slice', price: 30 },
+          { name: 'Crispy Onion Rings', price: 40 },
+          { name: 'Spicy Jalapenos Dip', price: 20 }
+        ],
         image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuB0hYqGqVXMaandNXDO1PnSXe7pI-gLY8sdi52kDTRpJ7VRW_HiVj8QXTNHhMFe9KfRjg8Rp2J8ooNYO5ea4Ca2Fj6VAnLXLu0Lv0k0du822bUsmmaVTf1fAIoBUUYE35YMqMjcDnKd3BEcOAgJ8Udam_G3MLTPzQa-CP8eusTskALcAdirBFFOU0_hJ8M7-xeBw9WhQrfGLwx-0gNdOMMD9tJSg6V6Qmre8azfZLuuD5Hy3wdTcaujf97q_P5nmwjlRekqNyGV6kJU',
         tags: ['Veg'],
         inStock: true,
@@ -269,21 +302,18 @@ async function seed() {
       },
       {
         restaurantId: spiceGarden._id,
-        categoryId: mainId,
-        name: 'Dal Makhani',
-        description: 'Creamy black lentils slow cooked overnight',
-        price: 345,
-        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCO0GxvQPQqHCNtPeYKdN5xchPr9LOnXM-LYEeVD6W0KB85uTRhqDhTq3bgZUFLm2e62PtBHlxKz41stt4jghP12InqUeGVE6yJxU7qzQRYkgxpgGEFswjrHWszEZ6dTXqGCK7umYgvWLxieoDDCmgHcOkMaQFCQ_dJWevovkkxALX-up0IeBjKYN1VtTmMYNv87uQ4HneJdlXBt2IRsiTKTOy_UPw9iR2uDfggSaLhmBm2jLWO_AvsOecLjlqIaMQmEdeER6pWgWzA',
-        tags: ['Veg'],
-        inStock: true,
-        badges: ['Best Seller']
-      },
-      {
-        restaurantId: spiceGarden._id,
-        categoryId: mainId,
-        name: 'Butter Chicken',
-        description: 'Classic makhani style boneless chicken in sweet gravy',
-        price: 425,
+        categoryId: startersId,
+        name: 'Ultimate Chicken Burger',
+        description: 'Tender chicken breast patty, golden fried, served with garlic herb aioli and cheese.',
+        hasVariants: true,
+        variants: [
+          { name: 'Regular Size', price: 179 },
+          { name: 'Monster Double Patty', price: 279 }
+        ],
+        addons: [
+          { name: 'Extra Melted Cheese', price: 40 },
+          { name: 'Crispy Bacon Strips', price: 60 }
+        ],
         image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA7D5kUK46Jnb2hb_ygu6HZgiD1o1IVa4acNvfdq31ukFKVqQaNGb9vCezfDjZbBw4alF0IjhPTOGiN8npPwUfccN8o6Fqtl1wL0JP39b40W0UpNrRP2cJeIHvktUslsAby6wTUUI39U3BhBreCRqjpMqBD-YWVYIsUJpVPEJvqRxcB9VvskTFmKLrsARdeDcKev43SbhXtnOaUj7e9u8XCncHt5fuh5vUulwvC66oiqKQ_8OJkRvAiBdAQTBjn-MwrV37rka2Bi2vs',
         tags: ['Non-Veg'],
         inStock: true,
@@ -292,20 +322,39 @@ async function seed() {
       {
         restaurantId: spiceGarden._id,
         categoryId: mainId,
-        name: 'Garlic Naan',
-        description: 'Buttery leavened bread with roasted garlic pieces',
-        price: 95,
-        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDwM7U14KGlzcFWVWwRrQCft9-EdOvgrM3SU1Zv3nu4vgApugBxsiRY-2m8aFJqukSNm-AdRN0UgCzvK96Jo_L5Zmhwwqj-VYKo6zBFIdV4O1AIOIlnLnrzZNOG-1E4VIOfnP52TFw0up3dhRNQwwXkuY6uxBsKzgGv5-bImgIp20743r360VY5jcE44bv3NDSYEKgJ6GNUeIWqCmRCW74_J6yxyGQ8YgYKLMu1lVym4I4dC8u_AdUV9ebUFTf-9sZJg9IwHqdhN_3-',
+        name: 'Cheese Margherita Pizza',
+        description: 'Classic delight loaded with 100% real mozzarella cheese on signature herb marinara sauce.',
+        hasVariants: true,
+        variants: [
+          { name: 'Personal 7"', price: 199 },
+          { name: 'Medium 10"', price: 349 },
+          { name: 'Large 12"', price: 549 }
+        ],
+        addons: [
+          { name: 'Extra Mozzarella Cheese', price: 70 },
+          { name: 'Mushrooms & Jalapenos', price: 45 },
+          { name: 'Olives & Sweet Corn', price: 40 }
+        ],
+        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCO0GxvQPQqHCNtPeYKdN5xchPr9LOnXM-LYEeVD6W0KB85uTRhqDhTq3bgZUFLm2e62PtBHlxKz41stt4jghP12InqUeGVE6yJxU7qzQRYkgxpgGEFswjrHWszEZ6dTXqGCK7umYgvWLxieoDDCmgHcOkMaQFCQ_dJWevovkkxALX-up0IeBjKYN1VtTmMYNv87uQ4HneJdlXBt2IRsiTKTOy_UPw9iR2uDfggSaLhmBm2jLWO_AvsOecLjlqIaMQmEdeER6pWgWzA',
         tags: ['Veg'],
         inStock: true,
-        badges: []
+        badges: ['Best Seller']
       },
       {
         restaurantId: spiceGarden._id,
         categoryId: mainId,
-        name: 'Mutton Biryani',
-        description: 'Aromatic basmati rice cooked with tender mutton pieces',
-        price: 595,
+        name: 'Spicy Chicken Pepperoni Pizza',
+        description: 'Loaded with classic chicken pepperoni, extra mozzarella cheese and red paprika flakes.',
+        hasVariants: true,
+        variants: [
+          { name: 'Personal 7"', price: 249 },
+          { name: 'Medium 10"', price: 429 },
+          { name: 'Large 12"', price: 649 }
+        ],
+        addons: [
+          { name: 'Extra Cheese Burst Crust', price: 99 },
+          { name: 'Extra Pepperoni Slices', price: 80 }
+        ],
         image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCcUmnAIUHMRHUjJhq_mnpmsgcFSdbgLzVlHSK1C2gtU1le-EpZtCQppSCJPArXbsWSrf9niFc5A_wEeAsEGdorNH6G3TJ-MM90akwNNOl4ttfXMSiR1H5r-YzJkzMBjx5K4E7G9uPgMCH0OmVHRA6H7_cupZMet_HXoXiTAz5EuJlgFpGOAvrsDz4dlzUTLRrX4_2fSi1CHVZs7iOvtqG-axdbJdk92hOoN3QNkkZ2MWFWAeJ_jxYWtol-CQYQSkoG2Eaa3RH2eW1d',
         tags: ['Non-Veg'],
         inStock: true,
@@ -313,10 +362,31 @@ async function seed() {
       },
       {
         restaurantId: spiceGarden._id,
+        categoryId: beverageId,
+        name: 'Lagoon Blue Mocktail',
+        description: 'Refreshing blue curacao citrus syrup topped with fizzy club soda, mint and lemon slice.',
+        price: 120,
+        hasVariants: false,
+        addons: [
+          { name: 'Extra Mint Leaves', price: 10 },
+          { name: 'Ice Cream Scoop', price: 20 }
+        ],
+        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDwM7U14KGlzcFWVWwRrQCft9-EdOvgrM3SU1Zv3nu4vgApugBxsiRY-2m8aFJqukSNm-AdRN0UgCzvK96Jo_L5Zmhwwqj-VYKo6zBFIdV4O1AIOIlnLnrzZNOG-1E4VIOfnP52TFw0up3dhRNQwwXkuY6uxBsKzgGv5-bImgIp20743r360VY5jcE44bv3NDSYEKgJ6GNUeIWqCmRCW74_J6yxyGQ8YgYKLMu1lVym4I4dC8u_AdUV9ebUFTf-9sZJg9IwHqdhN_3-',
+        tags: ['Veg'],
+        inStock: true,
+        badges: []
+      },
+      {
+        restaurantId: spiceGarden._id,
         categoryId: dessertId,
-        name: 'Gulab Jamun',
-        description: 'Warm milk dumplings in sweet saffron syrup',
-        price: 125,
+        name: 'Double Chocolate Brownie',
+        description: 'Rich gooey dark chocolate brownie served with warm chocolate fudge sauce.',
+        price: 149,
+        hasVariants: false,
+        addons: [
+          { name: 'Vanilla Ice Cream Scoop', price: 40 },
+          { name: 'Choco Chips Sprinkle', price: 15 }
+        ],
         image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAdc5FQfxb1YxG8LkL822tNC7EUZoonVWOk4V216H54QWKhXCTh1AAU_KFkTKm66C0J_UCx0lZrY2njoAU-tApBRFB5T-1nBfNAP7BIDFel9JAbmfi9X4a9rMh2fklgswMg9NWjF6mps_sOVIJMQetKbFYUm-k9FEAciSEf72jXuYWpxGM7ROzJoPUIdSpLr94u1RHr7gyOEizheINvD9lnFk9ba2hVQ5FpXrsVSb21OgoYRIoSgmE9NlNsPGrn8FrAJxZWbf5xULKu',
         tags: ['Veg'],
         inStock: true,
@@ -333,8 +403,6 @@ async function seed() {
     // 8. Seed Tables for Spice Garden
     const tableNames = ['Table 1', 'Table 2', 'Table 3', 'Table 4'];
     const tables = [];
-    const clientHost = 'http://localhost:5173';
-    
     for (let name of tableNames) {
       const targetUrl = `${clientHost}/menu/spice-garden?table=${encodeURIComponent(name)}`;
       const qrCodeData = await require('qrcode').toDataURL(targetUrl, { width: 300 });

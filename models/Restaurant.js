@@ -7,6 +7,7 @@ const RestaurantSchema = new mongoose.Schema({
   phone: { type: String },
   address: { type: String },
   logo: { type: String }, // URL or local path
+  banners: { type: [String], default: [] }, // Carousel images for diner main view
   brandColor: { type: String, default: '#003b1b' },
   googleMapsLink: { type: String },
   reviewLink: { type: String },
@@ -20,7 +21,8 @@ const RestaurantSchema = new mongoose.Schema({
     maxTables: { type: Number, default: 10 },
     maxMenuItems: { type: Number, default: 50 },
     price: { type: Number, default: 0 },
-    billingCycle: { type: String, default: 'monthly', enum: ['monthly', 'yearly'] },
+    billingCycle: { type: String, default: 'monthly', enum: ['monthly', 'yearly', 'trial'] },
+    trialDays: { type: Number, default: 0 },
     startDate: { type: Date },
     endDate: { type: Date }
   },
@@ -75,9 +77,22 @@ const RestaurantSchema = new mongoose.Schema({
   // Branding & Display Settings (Restaurant Admin controls)
   brandingSettings: {
     tagline: { type: String },
-    pwaName: { type: String },
+    pwaName: { type: String }, // User/Diner app name
     pageTitle: { type: String },
     footerText: { type: String },
+    
+    // Panel specific names
+    waiterAppName: { type: String },
+    kitchenAppName: { type: String },
+    adminAppName: { type: String },
+    counterAppName: { type: String },
+
+    // Panel specific logos
+    userAppLogo: { type: String },
+    waiterAppLogo: { type: String },
+    kitchenAppLogo: { type: String },
+    adminAppLogo: { type: String },
+    counterAppLogo: { type: String },
     
     // Visibility flags for social & reviews
     showGoogleReview: { type: Boolean, default: true },
@@ -98,7 +113,7 @@ const RestaurantSchema = new mongoose.Schema({
   actionButtons: [{
     type: {
       type: String,
-      enum: ['googleReview', 'instagram', 'facebook', 'whatsapp', 'call', 'website', 'shareMenu', 'addToHomeScreen', 'feedback', 'loyalty']
+      enum: ['googleReview', 'instagram', 'facebook', 'whatsapp', 'call', 'website', 'shareMenu', 'addToHomeScreen', 'feedback', 'loyalty', 'callWaiter']
     },
     label: { type: String },
     icon: { type: String },

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -28,7 +29,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Protect all routes here
-router.use(authenticate, authorize('restaurantadmin'));
+router.use(authenticate, authorize(['restaurantadmin', 'kitchen', 'counter', 'waiter']));
 
 // GET /api/restaurant/profile
 router.get('/profile', async (req, res) => {
@@ -49,7 +50,7 @@ router.get('/profile', async (req, res) => {
 
 // PUT /api/restaurant/profile
 router.put('/profile', async (req, res) => {
-  const { name, phone, address, brandColor, googleMapsLink, reviewLink, socialLinks } = req.body;
+  const { name, phone, address, brandColor, googleMapsLink, reviewLink, socialLinks, banners, pins } = req.body;
   try {
     const restaurant = await Restaurant.findById(req.user.restaurantId);
     if (!restaurant) {
@@ -63,6 +64,21 @@ router.put('/profile', async (req, res) => {
     if (googleMapsLink !== undefined) restaurant.googleMapsLink = googleMapsLink;
     if (reviewLink !== undefined) restaurant.reviewLink = reviewLink;
     if (socialLinks) restaurant.socialLinks = { ...restaurant.socialLinks, ...socialLinks };
+    if (banners !== undefined) restaurant.banners = banners;
+
+    if (pins) {
+      if (pins.kitchen && (pins.kitchen.length !== 4 || isNaN(pins.kitchen))) {
+        return res.status(400).json({ message: 'Kitchen PIN must be a 4-digit number.' });
+      }
+      if (pins.counter && (pins.counter.length !== 4 || isNaN(pins.counter))) {
+        return res.status(400).json({ message: 'Counter PIN must be a 4-digit number.' });
+      }
+      restaurant.pins = {
+        kitchen: pins.kitchen || restaurant.pins.kitchen,
+        counter: pins.counter || restaurant.pins.counter,
+        waiter: pins.waiter || restaurant.pins.waiter || '3333'
+      };
+    }
 
     const updated = await restaurant.save();
     res.json(updated);
@@ -109,7 +125,12 @@ router.put('/action-buttons', async (req, res) => {
 
 // PUT /api/restaurant/branding
 router.put('/branding', async (req, res) => {
-  const { tagline, pwaName, pageTitle, footerText, showGoogleReview, showInstagram, showFacebook, showWhatsapp } = req.body;
+  const { 
+    tagline, pwaName, pageTitle, footerText, 
+    showGoogleReview, showInstagram, showFacebook, showWhatsapp,
+    waiterAppName, kitchenAppName, adminAppName, counterAppName,
+    userAppLogo, waiterAppLogo, kitchenAppLogo, adminAppLogo, counterAppLogo
+  } = req.body;
   try {
     const restaurant = await Restaurant.findById(req.user.restaurantId);
     if (!restaurant) {
@@ -125,7 +146,20 @@ router.put('/branding', async (req, res) => {
       showGoogleReview: showGoogleReview !== undefined ? showGoogleReview : restaurant.brandingSettings.showGoogleReview,
       showInstagram: showInstagram !== undefined ? showInstagram : restaurant.brandingSettings.showInstagram,
       showFacebook: showFacebook !== undefined ? showFacebook : restaurant.brandingSettings.showFacebook,
-      showWhatsapp: showWhatsapp !== undefined ? showWhatsapp : restaurant.brandingSettings.showWhatsapp
+      showWhatsapp: showWhatsapp !== undefined ? showWhatsapp : restaurant.brandingSettings.showWhatsapp,
+      
+      // Panel specific custom names
+      waiterAppName: waiterAppName !== undefined ? waiterAppName : restaurant.brandingSettings.waiterAppName,
+      kitchenAppName: kitchenAppName !== undefined ? kitchenAppName : restaurant.brandingSettings.kitchenAppName,
+      adminAppName: adminAppName !== undefined ? adminAppName : restaurant.brandingSettings.adminAppName,
+      counterAppName: counterAppName !== undefined ? counterAppName : restaurant.brandingSettings.counterAppName,
+
+      // Panel specific custom logos
+      userAppLogo: userAppLogo !== undefined ? userAppLogo : restaurant.brandingSettings.userAppLogo,
+      waiterAppLogo: waiterAppLogo !== undefined ? waiterAppLogo : restaurant.brandingSettings.waiterAppLogo,
+      kitchenAppLogo: kitchenAppLogo !== undefined ? kitchenAppLogo : restaurant.brandingSettings.kitchenAppLogo,
+      adminAppLogo: adminAppLogo !== undefined ? adminAppLogo : restaurant.brandingSettings.adminAppLogo,
+      counterAppLogo: counterAppLogo !== undefined ? counterAppLogo : restaurant.brandingSettings.counterAppLogo
     };
 
     const updated = await restaurant.save();
@@ -173,7 +207,7 @@ router.get('/dashboard/stats', async (req, res) => {
     const revenueRes = await Order.aggregate([
       {
         $match: {
-          restaurantId: new require('mongoose').Types.ObjectId(restaurantId),
+          restaurantId: new mongoose.Types.ObjectId(restaurantId),
           status: 'Completed',
           createdAt: { $gte: startOfToday, $lte: endOfToday }
         }
@@ -188,11 +222,62 @@ router.get('/dashboard/stats', async (req, res) => {
       status: { $in: ['New', 'Accepted', 'Preparing', 'Ready'] }
     });
 
+    // Last week's revenue (past 7 days)
+    const lastWeekStart = new Date();
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    lastWeekStart.setHours(0, 0, 0, 0);
+    const lastWeekRevenueRes = await Order.aggregate([
+      {
+        $match: {
+          restaurantId: new mongoose.Types.ObjectId(restaurantId),
+          status: 'Completed',
+          createdAt: { $gte: lastWeekStart }
+        }
+      },
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+    ]);
+    const lastWeekRevenue = lastWeekRevenueRes.length > 0 ? lastWeekRevenueRes[0].total : 0;
+
+    // Monthly revenue (past 30 days)
+    const monthlyStart = new Date();
+    monthlyStart.setDate(monthlyStart.getDate() - 30);
+    monthlyStart.setHours(0, 0, 0, 0);
+    const monthlyRevenueRes = await Order.aggregate([
+      {
+        $match: {
+          restaurantId: new mongoose.Types.ObjectId(restaurantId),
+          status: 'Completed',
+          createdAt: { $gte: monthlyStart }
+        }
+      },
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+    ]);
+    const monthlyRevenue = monthlyRevenueRes.length > 0 ? monthlyRevenueRes[0].total : 0;
+
+    // Lifetime revenue
+    const lifetimeRevenueRes = await Order.aggregate([
+      {
+        $match: {
+          restaurantId: new mongoose.Types.ObjectId(restaurantId),
+          status: 'Completed'
+        }
+      },
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+    ]);
+    const lifetimeRevenue = lifetimeRevenueRes.length > 0 ? lifetimeRevenueRes[0].total : 0;
+
+    // Lifetime orders count
+    const lifetimeOrdersCount = await Order.countDocuments({ restaurantId });
+
     res.json({
       totalTables,
       todayOrdersCount,
       todayRevenue,
-      activeOrdersCount
+      lastWeekRevenue,
+      monthlyRevenue,
+      activeOrdersCount,
+      lifetimeRevenue,
+      lifetimeOrdersCount
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -254,6 +339,34 @@ router.post('/generate-qr', async (req, res) => {
     res.json({ qrData, url, heading, subtext });
   } catch (error) {
     res.status(500).json({ message: 'QR generation failed', error: error.message });
+  }
+});
+
+// POST /api/restaurant/change-password
+router.post('/change-password', async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  try {
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new passwords are required.' });
+    }
+
+    const admin = await RestaurantAdmin.findOne({ restaurantId: req.user.restaurantId });
+    if (!admin) {
+      return res.status(404).json({ message: 'Restaurant administrator account not found.' });
+    }
+
+    const bcrypt = require('bcryptjs');
+    const isMatch = await bcrypt.compare(currentPassword, admin.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Current password is incorrect.' });
+    }
+
+    admin.password = await bcrypt.hash(newPassword, 10);
+    await admin.save();
+
+    res.json({ message: 'Password updated successfully.' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
