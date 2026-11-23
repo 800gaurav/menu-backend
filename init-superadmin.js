@@ -144,7 +144,7 @@ async function initSuperAdmin() {
     console.log(`   Username: ${username}`);
     console.log(`   Email:    ${email}`);
     console.log(`   Password: ${password}`);
-    console.log(`   Login URL: http://localhost:5176/superadmin/login`);
+    console.log(`   Login URL: https://admin.menu.genzteck.com/superadmin/login`);
     console.log('==========================================\n');
 
     await mongoose.disconnect();
