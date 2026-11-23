@@ -14,18 +14,11 @@ router.get('/dashboard', async (req, res) => {
     const since = new Date();
     since.setDate(since.getDate() - Number(req.query.days || 30));
 
-    const [qrScans, revenue, mostOrderedItems, retention, tablePerformance, roomPerformance, peakHours] = await Promise.all([
+    const [qrScans, revenue, retention, tablePerformance, roomPerformance, peakHours] = await Promise.all([
       QRScan.countDocuments({ restaurantId, createdAt: { $gte: since } }),
       Order.aggregate([
         { $match: { restaurantId, status: { $in: ['Served', 'Completed'] }, createdAt: { $gte: since } } },
         { $group: { _id: null, total: { $sum: '$totalAmount' }, orders: { $sum: 1 } } }
-      ]),
-      Order.aggregate([
-        { $match: { restaurantId, createdAt: { $gte: since } } },
-        { $unwind: '$items' },
-        { $group: { _id: '$items.name', quantity: { $sum: '$items.quantity' }, revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } } } },
-        { $sort: { quantity: -1 } },
-        { $limit: 10 }
       ]),
       Customer.aggregate([
         { $match: { restaurantId } },
@@ -53,7 +46,6 @@ router.get('/dashboard', async (req, res) => {
     res.json({
       qrScans,
       revenue: revenue[0] || { total: 0, orders: 0 },
-      mostOrderedItems,
       customerRetention: retention[0] || { customers: 0, returning: 0 },
       tablePerformance,
       roomPerformance,

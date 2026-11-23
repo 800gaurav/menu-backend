@@ -77,6 +77,7 @@ const RestaurantSchema = new mongoose.Schema({
   // Branding & Display Settings (Restaurant Admin controls)
   brandingSettings: {
     tagline: { type: String },
+    menuItemLayout: { type: String, enum: ['grid', 'list'], default: 'grid' },
     pwaName: { type: String }, // User/Diner app name
     pageTitle: { type: String },
     footerText: { type: String },

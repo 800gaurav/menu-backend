@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const dotenv = require('dotenv');
+const Restaurant = require('./models/Restaurant');
 
 // Load environment variables
 dotenv.config();
@@ -44,6 +45,16 @@ mongoose.connect(mongoURI)
       );
       if (result.modifiedCount > 0) {
         console.log(`Auto-migrated: updated ${result.modifiedCount} Completed orders to paymentStatus 'Paid'.`);
+      }
+
+      // Auto-migrate any un-onboarded restaurant admins so they bypass setup wizard directly
+      const RestaurantAdmin = require('./models/RestaurantAdmin');
+      const adminMigrateResult = await RestaurantAdmin.updateMany(
+        { isOnboarded: false },
+        { $set: { isOnboarded: true } }
+      );
+      if (adminMigrateResult.modifiedCount > 0) {
+        console.log(`Auto-migrated: marked ${adminMigrateResult.modifiedCount} restaurant admins as onboarded.`);
       }
     } catch (migErr) {
       console.error('Failed to run one-time Completed-to-Paid order migration:', migErr);
@@ -174,6 +185,23 @@ const io = socketIo(server, {
 app.set('io', io);
 
 // Socket.IO Room management
+const joinEnabledPanelRoom = async (socket, restaurantId, feature, panelName) => {
+  if (!restaurantId) return;
+  const restaurantRoom = restaurantId.toString();
+  const room = `${restaurantRoom}_${panelName}`;
+  try {
+    const restaurant = await Restaurant.findById(restaurantRoom).select(`features.${feature}`).lean();
+    if (!restaurant || restaurant.features?.[feature] === false) {
+      socket.leave(room);
+      return;
+    }
+    socket.join(room);
+    console.log(`Socket ${socket.id} joined ${panelName} room: ${room}`);
+  } catch (error) {
+    console.error(`Could not verify ${panelName} panel access for socket ${socket.id}:`, error.message);
+  }
+};
+
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
@@ -185,36 +213,34 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} joined restaurant room: ${rId}`);
   });
 
-  // Support legacy / alternative room event
+  // Join Kitchen Panel room (KDS)
+  socket.on('joinKitchen', (restaurantId) => joinEnabledPanelRoom(socket, restaurantId, 'kitchenPanel', 'kitchen'));
+
+  socket.on('join_kitchen', (restaurantId) => joinEnabledPanelRoom(socket, restaurantId, 'kitchenPanel', 'kitchen'));
+
+  // Join Waiter Panel room
+  socket.on('joinWaiter', (restaurantId) => joinEnabledPanelRoom(socket, restaurantId, 'waiterPanel', 'waiter'));
+
+  // Legacy fallback room
   socket.on('join-restaurant', (restaurantId) => {
     if (!restaurantId) return;
     const rId = restaurantId.toString();
     socket.join(rId);
-    socket.join(`${rId}_kitchen`);
-    console.log(`Socket ${socket.id} joined restaurant & kitchen room: ${rId}`);
-  });
-
-  // Join Kitchen Panel room (joins both kitchen room and general restaurant room)
-  socket.on('joinKitchen', (restaurantId) => {
-    if (!restaurantId) return;
-    const rId = restaurantId.toString();
-    socket.join(`${rId}_kitchen`);
-    socket.join(rId);
-    console.log(`Socket ${socket.id} joined kitchen room: ${rId}_kitchen & ${rId}`);
-  });
-
-  socket.on('join_kitchen', (restaurantId) => {
-    if (!restaurantId) return;
-    const rId = restaurantId.toString();
-    socket.join(`${rId}_kitchen`);
-    socket.join(rId);
-    console.log(`Socket ${socket.id} joined kitchen room: ${rId}_kitchen & ${rId}`);
+    console.log(`Socket ${socket.id} joined restaurant room: ${rId}`);
   });
 
   // Join Customer tracking room
   socket.on('joinOrder', (orderId) => {
     socket.join(orderId);
     console.log(`Socket ${socket.id} joined order room: ${orderId}`);
+  });
+
+  // Join Shared Cart room (Group Ordering)
+  socket.on('joinCartSession', (cartSessionId) => {
+    if (!cartSessionId) return;
+    const room = `cart_${cartSessionId}`;
+    socket.join(room);
+    console.log(`Socket ${socket.id} joined shared cart room: ${room}`);
   });
 
   socket.on('disconnect', () => {

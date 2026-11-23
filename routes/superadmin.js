@@ -244,7 +244,7 @@ router.post('/restaurants', async (req, res) => {
       password: hashedPassword,
       plainPassword: generatedPassword,
       mobile: mobile || '',
-      isOnboarded: false
+      isOnboarded: true
     });
     await newAdmin.save();
 

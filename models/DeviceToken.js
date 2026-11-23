@@ -16,6 +16,13 @@ const DeviceTokenSchema = new mongoose.Schema({
     required: true,
     enum: ['restaurantadmin', 'kitchen', 'counter', 'waiter', 'customer']
   },
+  roles: {
+    type: [{
+      type: String,
+      enum: ['restaurantadmin', 'kitchen', 'counter', 'waiter', 'customer']
+    }],
+    default: []
+  },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     required: false

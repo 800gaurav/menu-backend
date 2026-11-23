@@ -8,6 +8,7 @@ const Restaurant = require('../models/Restaurant');
 const RestaurantAdmin = require('../models/RestaurantAdmin');
 const Order = require('../models/Order');
 const TableOrRoom = require('../models/TableOrRoom');
+const WaiterCall = require('../models/WaiterCall');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Make sure uploads directory exists
@@ -126,7 +127,7 @@ router.put('/action-buttons', async (req, res) => {
 // PUT /api/restaurant/branding
 router.put('/branding', async (req, res) => {
   const { 
-    tagline, pwaName, pageTitle, footerText, 
+    tagline, pwaName, pageTitle, footerText, menuItemLayout,
     showGoogleReview, showInstagram, showFacebook, showWhatsapp,
     waiterAppName, kitchenAppName, adminAppName, counterAppName,
     userAppLogo, waiterAppLogo, kitchenAppLogo, adminAppLogo, counterAppLogo
@@ -143,6 +144,7 @@ router.put('/branding', async (req, res) => {
       pwaName: pwaName !== undefined ? pwaName : restaurant.brandingSettings.pwaName,
       pageTitle: pageTitle !== undefined ? pageTitle : restaurant.brandingSettings.pageTitle,
       footerText: footerText !== undefined ? footerText : restaurant.brandingSettings.footerText,
+      menuItemLayout: menuItemLayout !== undefined ? menuItemLayout : restaurant.brandingSettings.menuItemLayout,
       showGoogleReview: showGoogleReview !== undefined ? showGoogleReview : restaurant.brandingSettings.showGoogleReview,
       showInstagram: showInstagram !== undefined ? showInstagram : restaurant.brandingSettings.showInstagram,
       showFacebook: showFacebook !== undefined ? showFacebook : restaurant.brandingSettings.showFacebook,
@@ -187,97 +189,93 @@ router.post('/wizard/complete', async (req, res) => {
 // GET /api/restaurant/dashboard/stats
 router.get('/dashboard/stats', async (req, res) => {
   try {
-    const restaurantId = req.user.restaurantId;
-    
-    // Total tables/rooms
-    const totalTables = await TableOrRoom.countDocuments({ restaurantId });
-    
-    // Orders today
-    const startOfToday = new Date();
+    const restaurantId = new mongoose.Types.ObjectId(req.user.restaurantId);
+    const now = new Date();
+    const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date();
+    const endOfToday = new Date(now);
     endOfToday.setHours(23, 59, 59, 999);
 
-    const todayOrdersCount = await Order.countDocuments({
-      restaurantId,
-      createdAt: { $gte: startOfToday, $lte: endOfToday }
-    });
-
-    // Today's revenue
-    const revenueRes = await Order.aggregate([
-      {
-        $match: {
-          restaurantId: new mongoose.Types.ObjectId(restaurantId),
-          status: 'Completed',
-          createdAt: { $gte: startOfToday, $lte: endOfToday }
-        }
-      },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
-    ]);
-    const todayRevenue = revenueRes.length > 0 ? revenueRes[0].total : 0;
-
-    // Active pending/preparing orders
-    const activeOrdersCount = await Order.countDocuments({
-      restaurantId,
-      status: { $in: ['New', 'Accepted', 'Preparing', 'Ready'] }
-    });
-
-    // Last week's revenue (past 7 days)
-    const lastWeekStart = new Date();
+    const lastWeekStart = new Date(now);
     lastWeekStart.setDate(lastWeekStart.getDate() - 7);
     lastWeekStart.setHours(0, 0, 0, 0);
-    const lastWeekRevenueRes = await Order.aggregate([
-      {
-        $match: {
-          restaurantId: new mongoose.Types.ObjectId(restaurantId),
-          status: 'Completed',
-          createdAt: { $gte: lastWeekStart }
-        }
-      },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
-    ]);
-    const lastWeekRevenue = lastWeekRevenueRes.length > 0 ? lastWeekRevenueRes[0].total : 0;
 
-    // Monthly revenue (past 30 days)
-    const monthlyStart = new Date();
+    const monthlyStart = new Date(now);
     monthlyStart.setDate(monthlyStart.getDate() - 30);
     monthlyStart.setHours(0, 0, 0, 0);
-    const monthlyRevenueRes = await Order.aggregate([
-      {
-        $match: {
-          restaurantId: new mongoose.Types.ObjectId(restaurantId),
-          status: 'Completed',
-          createdAt: { $gte: monthlyStart }
-        }
-      },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
-    ]);
-    const monthlyRevenue = monthlyRevenueRes.length > 0 ? monthlyRevenueRes[0].total : 0;
 
-    // Lifetime revenue
-    const lifetimeRevenueRes = await Order.aggregate([
-      {
-        $match: {
-          restaurantId: new mongoose.Types.ObjectId(restaurantId),
-          status: 'Completed'
-        }
-      },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
-    ]);
-    const lifetimeRevenue = lifetimeRevenueRes.length > 0 ? lifetimeRevenueRes[0].total : 0;
+    const trendStart = new Date(now);
+    trendStart.setDate(trendStart.getDate() - 29);
+    trendStart.setHours(0, 0, 0, 0);
 
-    // Lifetime orders count
-    const lifetimeOrdersCount = await Order.countDocuments({ restaurantId });
+    const [
+      todayOrdersCount,
+      todayRevenueRes,
+      orderQueueCounts,
+      pendingWaiterCallsCount,
+      lastWeekRevenueRes,
+      monthlyRevenueRes,
+      lifetimeRevenueRes,
+      lifetimeOrdersCount,
+      salesTrend
+    ] = await Promise.all([
+      Order.countDocuments({ restaurantId, createdAt: { $gte: startOfToday, $lte: endOfToday } }),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'Completed', createdAt: { $gte: startOfToday, $lte: endOfToday } } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      Order.aggregate([
+        { $match: { restaurantId, status: { $in: ['New', 'Accepted', 'Preparing', 'Ready', 'Served'] } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      WaiterCall.countDocuments({ restaurantId: { $in: [restaurantId, String(restaurantId)] }, isAttended: false }),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'Completed', createdAt: { $gte: lastWeekStart } } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'Completed', createdAt: { $gte: monthlyStart } } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      Order.aggregate([
+        { $match: { restaurantId, status: 'Completed' } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      Order.countDocuments({ restaurantId }),
+      Order.aggregate([
+        { $match: { restaurantId, status: { $ne: 'Cancelled' }, createdAt: { $gte: trendStart } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Kolkata' } },
+            revenue: { $sum: '$totalAmount' },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } },
+        { $project: { _id: 0, date: '$_id', revenue: 1, count: 1 } }
+      ])
+    ]);
+
+    const orderCountsByStatus = Object.fromEntries(orderQueueCounts.map(({ _id, count }) => [_id, count]));
+    const newOrdersCount = orderCountsByStatus.New || 0;
+    const readyOrdersCount = orderCountsByStatus.Ready || 0;
+    const cashierOrdersCount = orderCountsByStatus.Served || 0;
+    const activeOrdersCount = ['New', 'Accepted', 'Preparing', 'Ready']
+      .reduce((count, status) => count + (orderCountsByStatus[status] || 0), 0);
 
     res.json({
-      totalTables,
       todayOrdersCount,
-      todayRevenue,
-      lastWeekRevenue,
-      monthlyRevenue,
+      todayRevenue: todayRevenueRes[0]?.total || 0,
+      lastWeekRevenue: lastWeekRevenueRes[0]?.total || 0,
+      monthlyRevenue: monthlyRevenueRes[0]?.total || 0,
       activeOrdersCount,
-      lifetimeRevenue,
-      lifetimeOrdersCount
+      newOrdersCount,
+      cashierOrdersCount,
+      readyOrdersCount,
+      pendingWaiterCallsCount,
+      lifetimeRevenue: lifetimeRevenueRes[0]?.total || 0,
+      lifetimeOrdersCount,
+      salesTrend
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

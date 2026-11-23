@@ -3,10 +3,64 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
+const Restaurant = require('../models/Restaurant');
 const { authenticate, authorize } = require('../middleware/auth');
+
+// Helper to selectively emit order events based on restaurant plan features
+const emitOrderUpdate = (io, restRoom, restaurant, event, payload) => {
+  if (!io) return;
+  // Always emit to Restaurant Admin Dashboard
+  io.to(restRoom).emit(event, payload);
+  if (event === 'orderUpdated') {
+    io.to(restRoom).emit('order-updated', payload);
+  }
+  if (event === 'orderDeleted') {
+    io.to(restRoom).emit('order-deleted', payload);
+  }
+  // Only emit to Kitchen room if kitchenPanel is enabled in plan
+  if (restaurant?.features?.kitchenPanel !== false) {
+    io.to(`${restRoom}_kitchen`).emit(event, payload);
+    if (event === 'orderUpdated') {
+      io.to(`${restRoom}_kitchen`).emit('order-updated', payload);
+    }
+    if (event === 'orderDeleted') {
+      io.to(`${restRoom}_kitchen`).emit('order-deleted', payload);
+    }
+  }
+  // Only emit to Waiter room if waiterPanel is enabled in plan
+  if (restaurant?.features?.waiterPanel !== false) {
+    io.to(`${restRoom}_waiter`).emit(event, payload);
+    if (event === 'orderUpdated') {
+      io.to(`${restRoom}_waiter`).emit('order-updated', payload);
+    }
+    if (event === 'orderDeleted') {
+      io.to(`${restRoom}_waiter`).emit('order-deleted', payload);
+    }
+  }
+};
 
 // Protect all routes here
 router.use(authenticate, authorize(['restaurantadmin', 'kitchen', 'counter', 'waiter']));
+
+// Validate plan permissions for kitchen and waiter roles
+router.use(async (req, res, next) => {
+  try {
+    const restaurant = await Restaurant.findById(req.user.restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found' });
+    }
+    if (req.user.role === 'kitchen' && restaurant.features?.kitchenPanel === false) {
+      return res.status(403).json({ message: 'Kitchen panel is not enabled in your subscription plan.' });
+    }
+    if (req.user.role === 'waiter' && restaurant.features?.waiterPanel === false) {
+      return res.status(403).json({ message: 'Waiter panel is not enabled in your subscription plan.' });
+    }
+    req.restaurant = restaurant;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/orders
 router.get('/', async (req, res) => {
@@ -15,7 +69,7 @@ router.get('/', async (req, res) => {
     const restId = mongoose.Types.ObjectId.isValid(req.user.restaurantId)
       ? new mongoose.Types.ObjectId(req.user.restaurantId)
       : req.user.restaurantId;
-    const query = { restaurantId: restId };
+    const query = { restaurantId: { $in: [restId, String(restId)] } };
     const andConditions = [];
     
     if (history === 'true') {
@@ -45,16 +99,26 @@ router.get('/', async (req, res) => {
     }
 
     if (startDate || endDate) {
-      query.createdAt = {};
+      const dateCond = {};
       if (startDate) {
         const start = new Date(startDate);
         start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
+        dateCond.$gte = start;
       }
       if (endDate) {
         const end = new Date(endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
+        dateCond.$lte = end;
+      }
+      if (history === 'true') {
+        andConditions.push({
+          $or: [
+            { completedAt: dateCond },
+            { $and: [{ completedAt: { $exists: false } }, { createdAt: dateCond }] }
+          ]
+        });
+      } else {
+        query.createdAt = dateCond;
       }
     }
 
@@ -112,12 +176,16 @@ router.get('/', async (req, res) => {
         }
       }
 
+      const sortCriteria = history === 'true'
+        ? { completedAt: -1, updatedAt: -1, createdAt: -1 }
+        : { createdAt: -1 };
+
       const [totalCount, orders, revenueAgg] = await Promise.all([
         Order.countDocuments(query),
         Order.find(query)
           .populate('customerId')
           .populate('waiterId')
-          .sort({ createdAt: -1 })
+          .sort(sortCriteria)
           .skip(skip)
           .limit(l),
         Order.aggregate([
@@ -137,7 +205,14 @@ router.get('/', async (req, res) => {
       });
     }
 
-    let ordersQuery = Order.find(query).populate('customerId').populate('waiterId').sort({ createdAt: -1 });
+    const sortCriteria = history === 'true'
+      ? { completedAt: -1, updatedAt: -1, createdAt: -1 }
+      : { createdAt: -1 };
+
+    let ordersQuery = Order.find(query)
+      .populate('customerId')
+      .populate('waiterId')
+      .sort(sortCriteria);
 
     if (limit) {
       ordersQuery = ordersQuery.limit(parseInt(limit));
@@ -184,16 +259,26 @@ router.get('/export', async (req, res) => {
     }
 
     if (startDate || endDate) {
-      query.createdAt = {};
+      const dateCond = {};
       if (startDate) {
         const start = new Date(startDate);
         start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
+        dateCond.$gte = start;
       }
       if (endDate) {
         const end = new Date(endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
+        dateCond.$lte = end;
+      }
+      if (history === 'true') {
+        andConditions.push({
+          $or: [
+            { completedAt: dateCond },
+            { $and: [{ completedAt: { $exists: false } }, { createdAt: dateCond }] }
+          ]
+        });
+      } else {
+        query.createdAt = dateCond;
       }
     }
 
@@ -222,14 +307,19 @@ router.get('/export', async (req, res) => {
       query.$and = andConditions;
     }
 
-    const orders = await Order.find(query).sort({ createdAt: -1 }).lean();
+    const sortCriteria = history === 'true'
+      ? { completedAt: -1, updatedAt: -1, createdAt: -1 }
+      : { createdAt: -1 };
+
+    const orders = await Order.find(query).sort(sortCriteria).lean();
 
     // Format as CSV
-    let csv = 'Order Number,Table/Room,Total Amount,Status,Date,Items\n';
+    let csv = 'Order Number,Table/Room,Total Amount,Status,Settled Date & Time (IST),Items\n';
     
     for (let o of orders) {
       const itemsString = (o.items || []).map(i => `${i.name} (x${i.quantity})`).join('; ');
-      const dateStr = o.createdAt ? new Date(o.createdAt).toISOString().slice(0, 10) : '';
+      const dateVal = o.completedAt || o.updatedAt || o.createdAt;
+      const dateStr = dateVal ? new Date(dateVal).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '';
       csv += `"${o.orderNumber || ''}","${o.tableName || ''}",${o.totalAmount || 0},"${o.status || ''}","${dateStr}","${itemsString}"\n`;
     }
 
@@ -268,6 +358,7 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ message: 'Invalid order status' });
     }
 
+    const previousStatus = order.status;
     order.status = status;
     if (status === 'Completed') {
       order.paymentStatus = 'Paid';
@@ -292,16 +383,15 @@ router.patch('/:id/status', async (req, res) => {
     if (timestampField && !order[timestampField]) order[timestampField] = new Date();
     order.statusTimeline.push({ status, timestamp: new Date() });
     await order.save();
+    await order.populate('customerId');
+    await order.populate('waiterId');
 
     // Trigger Socket.IO updates
     const io = req.app.get('io');
     if (io) {
       const restRoom = req.user.restaurantId.toString();
-      // Emit to restaurant dashboard and kitchen room
-      io.to(restRoom).emit('orderUpdated', order);
-      io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
-      io.to(restRoom).emit('order-updated', order);
-      io.to(`${restRoom}_kitchen`).emit('order-updated', order);
+      // Emit to restaurant dashboard and kitchen/waiter rooms based on plan features
+      emitOrderUpdate(io, restRoom, req.restaurant, 'orderUpdated', order);
       // Emit to specific customer order room
       io.to(order._id.toString()).emit('orderStatusChanged', order);
     }
@@ -309,13 +399,13 @@ router.patch('/:id/status', async (req, res) => {
     // Trigger FCM Push Notifications
     const { notifyRestaurantRoles, notifySpecificUser } = require('../utils/firebase');
     
-    // 1. Notify Waiters if order is Ready to Serve
-    if (status === 'Ready') {
+    // 1. Notify Waiters if order is Ready to Serve and waiterPanel is enabled
+    if (status === 'Ready' && previousStatus !== 'Ready' && req.restaurant?.features?.waiterPanel !== false) {
       notifyRestaurantRoles(
         order.restaurantId,
         'waiter',
-        'Food is Ready!',
-        `Order ${order.orderNumber} for Table ${order.tableName} is ready to serve.`,
+        `Ready to serve - ${req.restaurant?.name || 'Restaurant'}`,
+        `Table ${order.tableName} | Order ${order.orderNumber} is ready for pickup.`,
         { orderId: order._id.toString(), type: 'order_ready' }
       ).catch(err => console.error('Error triggering ready status FCM:', err));
     }
@@ -359,30 +449,13 @@ router.put('/:id', async (req, res) => {
     if (totalAmount !== undefined) order.totalAmount = totalAmount;
     
     await order.save();
-    
-    if (order.status === 'Served') {
-      const otherOrders = await Order.find({
-        restaurantId: req.user.restaurantId,
-        tableName: order.tableName,
-        status: 'Served',
-        _id: { $ne: order._id }
-      });
-      for (const other of otherOrders) {
-        other.items = [];
-        other.subtotal = 0;
-        other.taxAmount = 0;
-        other.totalAmount = 0;
-        await other.save();
-      }
-    }
+    await order.populate('customerId');
+    await order.populate('waiterId');
     
     const io = req.app.get('io');
     if (io) {
       const restRoom = req.user.restaurantId.toString();
-      io.to(restRoom).emit('orderUpdated', order);
-      io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
-      io.to(restRoom).emit('order-updated', order);
-      io.to(`${restRoom}_kitchen`).emit('order-updated', order);
+      emitOrderUpdate(io, restRoom, req.restaurant, 'orderUpdated', order);
       io.to(order._id.toString()).emit('orderStatusChanged', order);
     }
     
@@ -403,13 +476,12 @@ router.patch('/:id/priority', async (req, res) => {
     if (!order) return res.status(404).json({ message: 'Order not found' });
     order.priority = priority;
     await order.save();
+    await order.populate('customerId');
+    await order.populate('waiterId');
     const io = req.app.get('io');
     if (io) {
       const restRoom = req.user.restaurantId.toString();
-      io.to(restRoom).emit('orderUpdated', order);
-      io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
-      io.to(restRoom).emit('order-updated', order);
-      io.to(`${restRoom}_kitchen`).emit('order-updated', order);
+      emitOrderUpdate(io, restRoom, req.restaurant, 'orderUpdated', order);
     }
     res.json(order);
   } catch (error) {
@@ -424,15 +496,14 @@ router.patch('/:id/bill-request', async (req, res) => {
     if (!order) return res.status(404).json({ message: 'Order not found' });
     order.billRequested = true;
     await order.save();
+    await order.populate('customerId');
+    await order.populate('waiterId');
 
     // Trigger Socket.IO updates
     const io = req.app.get('io');
     if (io) {
       const restRoom = req.user.restaurantId.toString();
-      io.to(restRoom).emit('orderUpdated', order);
-      io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
-      io.to(restRoom).emit('order-updated', order);
-      io.to(`${restRoom}_kitchen`).emit('order-updated', order);
+      emitOrderUpdate(io, restRoom, req.restaurant, 'orderUpdated', order);
     }
 
     // Trigger FCM Push Notifications
@@ -475,14 +546,17 @@ router.patch('/:id/payment', async (req, res) => {
     for (const order of allOrdersToUpdate) {
       order.paymentStatus = paymentStatus;
       await order.save();
+      await order.populate('customerId');
+      await order.populate('waiterId');
 
       if (io) {
-        io.to(restRoom).emit('orderUpdated', order);
-        io.to(`${restRoom}_kitchen`).emit('orderUpdated', order);
+        emitOrderUpdate(io, restRoom, req.restaurant, 'orderUpdated', order);
         io.to(order._id.toString()).emit('orderStatusChanged', order);
       }
     }
     
+    await mainOrder.populate('customerId');
+    await mainOrder.populate('waiterId');
     res.json(mainOrder);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -500,8 +574,9 @@ router.delete('/:id', authorize(['restaurantadmin']), async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       const restRoom = req.user.restaurantId.toString();
-      io.to(restRoom).emit('orderDeleted', req.params.id);
-      io.to(`${restRoom}_kitchen`).emit('orderDeleted', req.params.id);
+      emitOrderUpdate(io, restRoom, req.restaurant, 'orderDeleted', req.params.id);
+      io.to(req.params.id.toString()).emit('orderDeleted', req.params.id);
+      io.to(req.params.id.toString()).emit('order-deleted', req.params.id);
     }
     
     res.json({ message: 'Order deleted successfully' });

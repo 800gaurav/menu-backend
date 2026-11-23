@@ -6,7 +6,7 @@ const RestaurantAdminSchema = new mongoose.Schema({
   password: { type: String, required: true }, // bcrypt hash
   plainPassword: { type: String }, // stored once for superadmin view
   mobile: { type: String },
-  isOnboarded: { type: Boolean, default: false }
+  isOnboarded: { type: Boolean, default: true }
 }, { timestamps: true });
 
 module.exports = mongoose.model('RestaurantAdmin', RestaurantAdminSchema);

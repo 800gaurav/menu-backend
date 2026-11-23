@@ -4,6 +4,8 @@ const OrderSchema = new mongoose.Schema({
   restaurantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Restaurant', required: true },
   tableOrRoomId: { type: mongoose.Schema.Types.ObjectId, ref: 'TableOrRoom', required: true },
   customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+  customerName: { type: String },
+  customerMobile: { type: String },
   source: { type: String, enum: ['customer_qr', 'takeaway', 'reception'], default: 'customer_qr' },
   tableName: { type: String, required: true }, // Cached name for speed, e.g. "Table 3" or "Room 101"
   items: [{
@@ -21,6 +23,8 @@ const OrderSchema = new mongoose.Schema({
   placedBy: { type: String, enum: ['customer', 'waiter'], default: 'customer' },
   waiterId: { type: mongoose.Schema.Types.ObjectId, ref: 'RestaurantAdmin' },
   subtotal: { type: Number },
+  discount: { type: Number, default: 0 },
+  adjustment: { type: Number, default: 0 },
   taxAmount: { type: Number },
   totalAmount: { type: Number, required: true },
   paymentStatus: { type: String, enum: ['Unpaid', 'Paid'], default: 'Unpaid' },

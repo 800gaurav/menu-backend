@@ -32,20 +32,47 @@ const sendPushNotification = async (tokens, title, body, data = {}) => {
 
   const tokenList = Array.isArray(tokens) ? tokens : [tokens];
   
-  // Clean tokens array of nulls/undefined/empty strings
-  const validTokens = tokenList.filter(t => t && typeof t === 'string');
+  // Clean tokens array of nulls/undefined/empty strings and deduplicate
+  const validTokens = [...new Set(tokenList.filter(t => t && typeof t === 'string'))];
   if (validTokens.length === 0) return;
 
-  // Set up message payload
+  // Determine tag for notification deduplication in Chrome/browsers
+  const tag = data.orderId
+    ? `${data.type === 'order_ready' ? 'order-ready' : data.type?.startsWith('new_order') ? 'new-order' : `order-${data.type || 'update'}`}-${data.orderId}`
+    : (data.callId
+      ? `call-${data.callId}`
+      : (data.alertId ? `alert-${data.alertId}` : 'menuos-alert'));
+
+  const stringData = Object.keys(data).reduce((acc, key) => {
+    acc[key] = String(data[key]);
+    return acc;
+  }, {});
+  if (!stringData.tag) stringData.tag = tag;
+
+  // Set up message payload with webpush config so Chrome deduplicates identical alerts
   const message = {
     notification: {
       title,
       body
     },
-    data: Object.keys(data).reduce((acc, key) => {
-      acc[key] = String(data[key]);
-      return acc;
-    }, {}),
+    data: stringData,
+    webpush: {
+      headers: {
+        Urgency: 'high'
+      },
+      notification: {
+        title,
+        body,
+        icon: '/icon-512.png',
+        badge: '/icon-512.png',
+        tag,
+        renotify: false,
+        silent: false,
+        vibrate: [180, 80, 180],
+        timestamp: Date.now(),
+        data: stringData
+      }
+    },
     tokens: validTokens
   };
 
@@ -84,9 +111,12 @@ const notifyRestaurantRoles = async (restaurantId, roles, title, body, data = {}
     const roleList = Array.isArray(roles) ? roles : [roles];
     const devTokens = await DeviceToken.find({
       restaurantId,
-      role: { $in: roleList }
+      $or: [
+        { role: { $in: roleList } },
+        { roles: { $in: roleList } }
+      ]
     });
-    const tokens = devTokens.map(dt => dt.token);
+    const tokens = [...new Set(devTokens.map(dt => dt.token).filter(Boolean))];
     if (tokens.length > 0) {
       await sendPushNotification(tokens, title, body, data);
     }
@@ -102,7 +132,7 @@ const notifySpecificUser = async (restaurantId, userId, title, body, data = {}) 
       restaurantId,
       userId
     });
-    const tokens = devTokens.map(dt => dt.token);
+    const tokens = [...new Set(devTokens.map(dt => dt.token).filter(Boolean))];
     if (tokens.length > 0) {
       await sendPushNotification(tokens, title, body, data);
     }

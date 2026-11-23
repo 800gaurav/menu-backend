@@ -9,6 +9,7 @@ const TableOrRoom = require('../models/TableOrRoom');
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
 const QRScan = require('../models/QRScan');
+const SharedCart = require('../models/SharedCart');
 
 // GET /api/customer/menu/:slug
 router.get('/menu/:slug', async (req, res) => {
@@ -43,10 +44,16 @@ router.get('/menu/:slug', async (req, res) => {
       ip: req.ip
     });
 
+    const activeTables = await TableOrRoom.find({ 
+      restaurantId: restaurant._id, 
+      isActive: true 
+    }).select('name type').sort({ name: 1 });
+
     res.json({
       restaurant,
       categories,
-      items
+      items,
+      tables: activeTables
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -93,7 +100,7 @@ router.post('/auth', async (req, res) => {
 
 // POST /api/customer/orders
 router.post('/orders', async (req, res) => {
-  const { slug, tableOrRoomName, tableOrRoomType, items, specialInstructions, customer = {}, source = 'customer_qr' } = req.body;
+  const { slug, tableOrRoomName, tableOrRoomType, items, specialInstructions, customer = {}, source = 'customer_qr', cartSessionId } = req.body;
   try {
     // 1. Resolve Restaurant
     const restaurant = await Restaurant.findOne({ slug });
@@ -242,6 +249,8 @@ router.post('/orders', async (req, res) => {
       restaurantId: restaurant._id,
       tableOrRoomId: tableObj._id,
       customerId: customerRecord?._id,
+      customerName: customerRecord?.name || customer?.name || '',
+      customerMobile: customerRecord?.mobile || customer?.mobile || '',
       tableName: tableObj.name,
       items: compiledItems,
       totalAmount,
@@ -253,25 +262,67 @@ router.post('/orders', async (req, res) => {
     });
 
     const savedOrder = await newOrder.save();
+    await savedOrder.populate('customerId');
 
     // 7. Push real-time Socket.IO & FCM notifications
     const io = req.app.get('io');
     if (io) {
       const restRoom = restaurant._id.toString();
-      // Notify restaurant admin dashboard & kitchen panel
+      // Always notify restaurant admin dashboard
       io.to(restRoom).emit('orderCreated', savedOrder);
-      io.to(`${restRoom}_kitchen`).emit('orderCreated', savedOrder);
       io.to(restRoom).emit('new-order', savedOrder);
-      io.to(`${restRoom}_kitchen`).emit('new-order', savedOrder);
+
+      // Only notify kitchen panel if kitchenPanel is enabled in plan
+      if (restaurant.features?.kitchenPanel !== false) {
+        io.to(`${restRoom}_kitchen`).emit('orderCreated', savedOrder);
+        io.to(`${restRoom}_kitchen`).emit('new-order', savedOrder);
+      }
+
+      // Only notify waiter panel if waiterPanel is enabled in plan
+      if (restaurant.features?.waiterPanel !== false) {
+        io.to(`${restRoom}_waiter`).emit('orderCreated', savedOrder);
+        io.to(`${restRoom}_waiter`).emit('new-order', savedOrder);
+      }
+
+      // If placed from a Shared Cart (Group Order), notify members & update cart session
+      if (cartSessionId) {
+        io.to(`cart_${cartSessionId}`).emit('groupOrderPlaced', {
+          orderId: savedOrder._id,
+          orderNumber: savedOrder.orderNumber,
+          tableName: savedOrder.tableName,
+          placedBy: customerRecord?.name || 'Host'
+        });
+      }
+    }
+
+    if (cartSessionId) {
+      try {
+        const sharedCart = await SharedCart.findOne({ cartSessionId });
+        if (sharedCart) {
+          sharedCart.status = 'ordered';
+          sharedCart.orderId = savedOrder._id;
+          sharedCart.items = [];
+          await sharedCart.save();
+        }
+      } catch (scErr) {
+        console.error('Error updating SharedCart on order placement:', scErr);
+      }
     }
 
     // Trigger FCM Push Notifications
     const { notifyRestaurantRoles } = require('../utils/firebase');
+    const notifyRoles = ['restaurantadmin', 'counter'];
+    if (restaurant.features?.kitchenPanel !== false) {
+      notifyRoles.push('kitchen');
+    }
+    if (restaurant.features?.waiterPanel !== false) {
+      notifyRoles.push('waiter');
+    }
     notifyRestaurantRoles(
       restaurant._id,
-      ['restaurantadmin', 'kitchen', 'counter'],
-      'New Order Placed!',
-      `Table ${tableObj.name} has placed a new order (${savedOrder.orderNumber}) for ₹${savedOrder.totalAmount}.`,
+      notifyRoles,
+      `New order - ${restaurant.name || 'Restaurant'}`,
+      `Table ${tableObj.name} | Order ${savedOrder.orderNumber} | ${savedOrder.items.reduce((count, item) => count + (Number(item.quantity) || 0), 0)} items | INR ${savedOrder.totalAmount}`,
       { orderId: savedOrder._id.toString(), type: 'new_order' }
     ).catch(err => console.error('Error triggering new order FCM:', err));
 
@@ -343,6 +394,9 @@ router.post('/call-waiter', async (req, res) => {
     if (!restaurant) {
       return res.status(404).json({ message: 'Restaurant not found' });
     }
+    if (restaurant.features && restaurant.features.waiterPanel === false) {
+      return res.status(403).json({ message: 'Waiter call service is not enabled in this restaurant subscription plan.' });
+    }
 
     let tableObj = await TableOrRoom.findOne({
       restaurantId: restaurant._id,
@@ -360,37 +414,163 @@ router.post('/call-waiter', async (req, res) => {
       await tableObj.save();
     }
 
+    const publishWaiterCall = (call) => {
+      const alertId = call._id.toString();
+      const io = req.app.get('io');
+      if (io) {
+        const restRoom = restaurant._id.toString();
+        // Emit to admin dashboard
+        io.to(restRoom).emit('waiterCalled', {
+          ...call.toObject(),
+          alertId
+        });
+        // Emit to waiter room if enabled
+        if (restaurant.features?.waiterPanel !== false) {
+          io.to(`${restRoom}_waiter`).emit('waiterCalled', {
+            ...call.toObject(),
+            alertId
+          });
+        }
+      }
+
+      if (restaurant.features?.waiterPanel !== false) {
+        const { notifyRestaurantRoles } = require('../utils/firebase');
+        notifyRestaurantRoles(
+          restaurant._id,
+          'waiter',
+          `Service requested - ${restaurant.name || 'Restaurant'}`,
+          `Table ${tableObj.name} is waiting for a waiter.`,
+          { callId: call._id.toString(), alertId, type: 'waiter_call' }
+        ).catch(err => console.error('Error waiter call FCM:', err));
+      }
+    };
+
+    // Repeated taps/retries for the same table should reuse the outstanding
+    // request until a waiter attends it instead of creating another alert.
+    const existingCall = await WaiterCall.findOne({
+      restaurantId: restaurant._id,
+      tableOrRoomId: tableObj._id,
+      isAttended: false
+    }).sort({ calledAt: -1 });
+    if (existingCall) {
+      return res.json(existingCall);
+    }
+
     const waiterCall = new WaiterCall({
       restaurantId: restaurant._id,
       tableOrRoomId: tableObj._id,
       tableLabel: tableObj.name,
+      activeCallKey: `${restaurant._id}:${tableObj._id}`,
       calledAt: new Date(),
       isAttended: false
     });
 
-    await waiterCall.save();
-
-    // Socket alert
-    const io = req.app.get('io');
-    if (io) {
-      const restRoom = restaurant._id.toString();
-      io.to(restRoom).emit('waiterCalled', waiterCall);
-      io.to(`${restRoom}_kitchen`).emit('waiterCalled', waiterCall);
+    try {
+      await waiterCall.save();
+    } catch (error) {
+      // The sparse unique key closes the race where two calls arrive together.
+      if (error.code === 11000) {
+        const activeCall = await WaiterCall.findOne({
+          restaurantId: restaurant._id,
+          tableOrRoomId: tableObj._id,
+          isAttended: false
+        }).sort({ calledAt: -1 });
+        if (activeCall) {
+          return res.json(activeCall);
+        }
+      }
+      throw error;
     }
 
-    // Trigger FCM Push Notifications
-    const { notifyRestaurantRoles } = require('../utils/firebase');
-    notifyRestaurantRoles(
-      restaurant._id,
-      'waiter',
-      'Waiter Called!',
-      `Table ${tableObj.name} is requesting assistance.`,
-      { callId: waiterCall._id.toString(), type: 'waiter_call' }
-    ).catch(err => console.error('Error waiter call FCM:', err));
+    publishWaiterCall(waiterCall);
 
     res.status(201).json(waiterCall);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ==========================================
+// SHARED / GROUP CART (Host & Partner Dining)
+// ==========================================
+
+// POST /api/customer/cart/session
+// Create or initialize a shared cart session
+router.post('/cart/session', async (req, res) => {
+  try {
+    const { restaurantSlug, tableName, tableType, hostId, hostName } = req.body;
+    if (!restaurantSlug || !tableName) {
+      return res.status(400).json({ message: 'restaurantSlug and tableName are required' });
+    }
+
+    const cartSessionId = `cart_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const newCart = new SharedCart({
+      cartSessionId,
+      restaurantSlug,
+      tableName,
+      tableType: tableType || 'Table',
+      hostId: hostId || `host_${Date.now()}`,
+      hostName: hostName || 'Host',
+      items: []
+    });
+    await newCart.save();
+
+    res.status(201).json(newCart);
+  } catch (err) {
+    console.error('Error creating shared cart session:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// GET /api/customer/cart/:cartSessionId
+// Fetch current shared cart
+router.get('/cart/:cartSessionId', async (req, res) => {
+  try {
+    const cart = await SharedCart.findOne({ cartSessionId: req.params.cartSessionId });
+    if (!cart) {
+      return res.status(404).json({ message: 'Shared cart session not found or expired' });
+    }
+    res.json(cart);
+  } catch (err) {
+    console.error('Error fetching shared cart:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// POST /api/customer/cart/:cartSessionId/sync
+// Sync items (add, update, remove) from host or partner
+router.post('/cart/:cartSessionId/sync', async (req, res) => {
+  try {
+    const { items, specialInstructions, senderId, senderName } = req.body;
+    const cart = await SharedCart.findOne({ cartSessionId: req.params.cartSessionId });
+    if (!cart) {
+      return res.status(404).json({ message: 'Shared cart session not found' });
+    }
+
+    if (Array.isArray(items)) {
+      cart.items = items;
+    }
+    if (specialInstructions !== undefined) {
+      cart.specialInstructions = specialInstructions;
+    }
+    cart.updatedAt = new Date();
+    await cart.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`cart_${cart.cartSessionId}`).emit('cartUpdated', {
+        cartSessionId: cart.cartSessionId,
+        items: cart.items,
+        specialInstructions: cart.specialInstructions,
+        senderId,
+        senderName: senderName || 'A dining partner'
+      });
+    }
+
+    res.json({ success: true, cart });
+  } catch (err) {
+    console.error('Error syncing shared cart:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
