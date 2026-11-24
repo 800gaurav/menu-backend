@@ -29,7 +29,7 @@ router.post('/superadmin/login', async (req, res) => {
     const token = jwt.sign(
       { id: admin._id, username: admin.username, role: 'superadmin' },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     res.json({ token, username: admin.username, role: 'superadmin' });
@@ -69,7 +69,7 @@ router.post('/restaurant/login', async (req, res) => {
         restaurantId: admin.restaurantId 
       },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     res.json({ 

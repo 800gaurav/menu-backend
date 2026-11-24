@@ -4,51 +4,34 @@ const Restaurant = require('../models/Restaurant');
 const backendUrl = process.env.BACKEND_URL;
 
 // Helper to construct dynamic manifests with guaranteed valid PNG icons
-const buildManifest = ({ name, shortName, desc, startUrl, logo, themeColor, bgColor, origin }) => {
+const buildManifest = ({ name, shortName, desc, startUrl, logo, themeColor, bgColor, origin, iconPath, icon192Path }) => {
   const absoluteLogo = logo 
     ? (logo.startsWith('http') ? logo : `${backendUrl}${logo.startsWith('/') ? '' : '/'}${logo}`)
     : null;
 
-  const icons = [];
+  // Always provide correctly sized PNG fallbacks. Uploaded restaurant logos are
+  // optimized to WebP, so they must not be advertised as PNG icons.
+  const icons = [
+    {
+      src: `${origin}${iconPath}`,
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'any'
+    },
+    {
+      src: `${origin}${icon192Path}`,
+      sizes: '192x192',
+      type: 'image/png',
+      purpose: 'any'
+    }
+  ];
 
-  // If a custom logo exists, define it for all standard PWA icon sizes
   if (absoluteLogo) {
-    icons.push({
-      src: absoluteLogo,
-      sizes: '192x192',
-      type: 'image/png',
-      purpose: 'any'
-    });
+    const logoType = /\.webp(?:$|\?)/i.test(absoluteLogo) ? 'image/webp' : 'image/png';
     icons.push({
       src: absoluteLogo,
       sizes: '512x512',
-      type: 'image/png',
-      purpose: 'any maskable'
-    });
-    icons.push({
-      src: absoluteLogo,
-      sizes: '1024x1024',
-      type: 'image/png',
-      purpose: 'any'
-    });
-  } else {
-    // Include guaranteed fallback icons with matching exact physical sizes to satisfy Chrome PWA rules
-    icons.push({
-      src: `${backendUrl}/uploads/default-icon.png`,
-      sizes: '1024x1024',
-      type: 'image/png',
-      purpose: 'any'
-    });
-    icons.push({
-      src: `${backendUrl}/uploads/default-icon-512.png`,
-      sizes: '512x512',
-      type: 'image/png',
-      purpose: 'any maskable'
-    });
-    icons.push({
-      src: `${backendUrl}/uploads/default-icon-192.png`,
-      sizes: '192x192',
-      type: 'image/png',
+      type: logoType,
       purpose: 'any maskable'
     });
   }
@@ -94,7 +77,9 @@ router.get('/:slug', async (req, res) => {
       logo,
       themeColor,
       bgColor: '#ffffff',
-      origin: requestOrigin
+      origin: requestOrigin,
+      iconPath: '/icon-512.png',
+      icon192Path: '/icon-192.png'
     });
 
     res.setHeader('Content-Type', 'application/manifest+json');
@@ -123,7 +108,9 @@ router.get('/:slug/waiter', async (req, res) => {
       logo,
       themeColor,
       bgColor: '#0f172a',
-      origin: requestOrigin
+      origin: requestOrigin,
+      iconPath: '/waiter/icon-512.png',
+      icon192Path: '/waiter/icon-192.png'
     });
 
     res.setHeader('Content-Type', 'application/manifest+json');
@@ -148,11 +135,13 @@ router.get('/:slug/kitchen', async (req, res) => {
       name,
       shortName: name,
       desc: `KDS Order Monitor for ${restaurant.name} kitchen`,
-      startUrl: `/kitchen/${restaurant.slug}`,
+      startUrl: `/admin/kitchen/${restaurant.slug}`,
       logo,
       themeColor,
       bgColor: '#0f172a',
-      origin: requestOrigin
+      origin: requestOrigin,
+      iconPath: '/admin/icon-512.png',
+      icon192Path: '/admin/icon-192.png'
     });
 
     res.setHeader('Content-Type', 'application/manifest+json');
@@ -177,11 +166,13 @@ router.get('/:slug/admin', async (req, res) => {
       name,
       shortName: name,
       desc: `Backoffice management for ${restaurant.name}`,
-      startUrl: `/admin`,
+      startUrl: `/admin/`,
       logo,
       themeColor,
       bgColor: '#ffffff',
-      origin: requestOrigin
+      origin: requestOrigin,
+      iconPath: '/admin/icon-512.png',
+      icon192Path: '/admin/icon-192.png'
     });
 
     res.setHeader('Content-Type', 'application/manifest+json');
@@ -210,7 +201,9 @@ router.get('/:slug/counter', async (req, res) => {
       logo,
       themeColor,
       bgColor: '#0d1117',
-      origin: requestOrigin
+      origin: requestOrigin,
+      iconPath: '/admin/icon-512.png',
+      icon192Path: '/admin/icon-192.png'
     });
 
     res.setHeader('Content-Type', 'application/manifest+json');

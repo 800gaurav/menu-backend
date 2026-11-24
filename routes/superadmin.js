@@ -466,7 +466,7 @@ router.post('/impersonate/:restaurantId', async (req, res) => {
     const token = jwt.sign(
       { id: admin._id, username: admin.username, role: 'restaurantadmin', restaurantId: admin.restaurantId },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
     res.json({
       token,

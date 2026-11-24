@@ -323,7 +323,12 @@ router.post('/orders', async (req, res) => {
       notifyRoles,
       `New order - ${restaurant.name || 'Restaurant'}`,
       `Table ${tableObj.name} | Order ${savedOrder.orderNumber} | ${savedOrder.items.reduce((count, item) => count + (Number(item.quantity) || 0), 0)} items | INR ${savedOrder.totalAmount}`,
-      { orderId: savedOrder._id.toString(), type: 'new_order' }
+      {
+        orderId: savedOrder._id.toString(),
+        type: 'new_order',
+        restaurantSlug: restaurant.slug,
+        clickPath: `/admin/kitchen/${restaurant.slug}?orderId=${savedOrder._id}`
+      }
     ).catch(err => console.error('Error triggering new order FCM:', err));
 
     // 8. Generate new token if not logged in

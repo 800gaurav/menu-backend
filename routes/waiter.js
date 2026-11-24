@@ -172,7 +172,12 @@ router.post('/orders', async (req, res) => {
       notifyRoles,
       `New order - ${restaurant.name || 'Restaurant'}`,
       `Table ${table.name} | Order ${savedOrder.orderNumber} | ${savedOrder.items.reduce((count, item) => count + (Number(item.quantity) || 0), 0)} items | INR ${savedOrder.totalAmount}`,
-      { orderId: savedOrder._id.toString(), type: 'new_order_waiter' }
+      {
+        orderId: savedOrder._id.toString(),
+        type: 'new_order_waiter',
+        restaurantSlug: restaurant.slug,
+        clickPath: `/admin/kitchen/${restaurant.slug}?orderId=${savedOrder._id}`
+      }
     ).catch(err => console.error('Error waiter order FCM:', err));
 
     res.status(201).json(savedOrder);

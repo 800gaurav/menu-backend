@@ -406,7 +406,12 @@ router.patch('/:id/status', async (req, res) => {
         'waiter',
         `Ready to serve - ${req.restaurant?.name || 'Restaurant'}`,
         `Table ${order.tableName} | Order ${order.orderNumber} is ready for pickup.`,
-        { orderId: order._id.toString(), type: 'order_ready' }
+        {
+          orderId: order._id.toString(),
+          type: 'order_ready',
+          restaurantSlug: req.restaurant.slug,
+          clickPath: `/waiter/${req.restaurant.slug}?orderId=${order._id}`
+        }
       ).catch(err => console.error('Error triggering ready status FCM:', err));
     }
 
@@ -425,7 +430,12 @@ router.patch('/:id/status', async (req, res) => {
           order.customerId,
           'Order Status Update',
           bodyText,
-          { orderId: order._id.toString(), type: 'customer_order_status' }
+          {
+            orderId: order._id.toString(),
+            type: 'customer_order_status',
+            restaurantSlug: req.restaurant.slug,
+            clickPath: `/menu/${req.restaurant.slug}?orderId=${order._id}`
+          }
         ).catch(err => console.error('Error triggering customer status FCM:', err));
       }
     }
