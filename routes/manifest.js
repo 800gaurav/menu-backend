@@ -9,9 +9,18 @@ const buildManifest = ({ name, shortName, desc, startUrl, scope, logo, themeColo
     ? (logo.startsWith('http') ? logo : `${backendUrl}${logo.startsWith('/') ? '' : '/'}${logo}`)
     : null;
 
-  // Always provide correctly sized PNG fallbacks. Uploaded restaurant logos are
-  // optimized to WebP, so they must not be advertised as PNG icons.
-  const icons = [
+  // Prefer the restaurant's uploaded logo so install prompts and app icons
+  // use the same branding as the panel. Keep static PNG icons as fallbacks.
+  const icons = [];
+  if (absoluteLogo) {
+    const logoType = /\.webp(?:$|\?)/i.test(absoluteLogo) ? 'image/webp' : 'image/png';
+    icons.push({
+      src: absoluteLogo,
+      type: logoType,
+      purpose: 'any'
+    });
+  }
+  icons.push(
     {
       src: `${origin}${iconPath}`,
       sizes: '512x512',
@@ -24,17 +33,7 @@ const buildManifest = ({ name, shortName, desc, startUrl, scope, logo, themeColo
       type: 'image/png',
       purpose: 'any'
     }
-  ];
-
-  if (absoluteLogo) {
-    const logoType = /\.webp(?:$|\?)/i.test(absoluteLogo) ? 'image/webp' : 'image/png';
-    icons.push({
-      src: absoluteLogo,
-      sizes: '512x512',
-      type: logoType,
-      purpose: 'any maskable'
-    });
-  }
+  );
 
   // Resolve startUrl: if relative, prepend the frontend request origin to avoid cross-origin mismatch blocks
   const resolvedStartUrl = startUrl.startsWith('http') 
@@ -66,7 +65,7 @@ router.get('/:slug', async (req, res) => {
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
 
     const name = restaurant.brandingSettings?.pwaName || restaurant.name;
-    const logo = restaurant.logo; // Always use the main restaurant logo
+    const logo = restaurant.brandingSettings?.userAppLogo || restaurant.logo;
     const themeColor = restaurant.brandColor || '#003b1b';
     const requestOrigin = req.query.origin || process.env.CLIENT_HOST;
 
@@ -97,7 +96,7 @@ router.get('/:slug/waiter', async (req, res) => {
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
 
     const name = restaurant.brandingSettings?.waiterAppName || `${restaurant.name} Waiter`;
-    const logo = restaurant.logo; // Always use the main restaurant logo
+    const logo = restaurant.brandingSettings?.waiterAppLogo || restaurant.logo;
     const themeColor = restaurant.brandColor || '#0f172a';
     const requestOrigin = req.query.origin || process.env.WAITER_HOST;
 
@@ -128,7 +127,7 @@ router.get('/:slug/kitchen', async (req, res) => {
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
 
     const name = restaurant.brandingSettings?.kitchenAppName || `${restaurant.name} Kitchen`;
-    const logo = restaurant.logo; // Always use the main restaurant logo
+    const logo = restaurant.brandingSettings?.kitchenAppLogo || restaurant.logo;
     const themeColor = restaurant.brandColor || '#0f172a';
     const requestOrigin = req.query.origin || process.env.STAFF_HOST;
 
@@ -159,7 +158,7 @@ router.get('/:slug/admin', async (req, res) => {
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
 
     const name = restaurant.brandingSettings?.adminAppName || `${restaurant.name} Admin`;
-    const logo = restaurant.logo; // Always use the main restaurant logo
+    const logo = restaurant.brandingSettings?.adminAppLogo || restaurant.logo;
     const themeColor = restaurant.brandColor || '#003b1b';
     const requestOrigin = req.query.origin || process.env.STAFF_HOST;
 
@@ -190,7 +189,7 @@ router.get('/:slug/counter', async (req, res) => {
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
 
     const name = restaurant.brandingSettings?.counterAppName || `${restaurant.name} Cashier`;
-    const logo = restaurant.logo; // Always use the main restaurant logo
+    const logo = restaurant.brandingSettings?.counterAppLogo || restaurant.logo;
     const themeColor = restaurant.brandColor || '#003b1b';
     const requestOrigin = req.query.origin || process.env.STAFF_HOST;
 
