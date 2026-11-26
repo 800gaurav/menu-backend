@@ -303,6 +303,12 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date() });
 });
 
+// Keep API failures machine-readable instead of falling through to Express's
+// default HTML 404 page, which hides missing production routes in the client.
+app.use('/api', (req, res) => {
+  res.status(404).json({ message: `API route ${req.method} ${req.originalUrl} was not found` });
+});
+
 // Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
