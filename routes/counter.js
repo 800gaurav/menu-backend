@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
 const Restaurant = require('../models/Restaurant');
+const TableOrRoom = require('../models/TableOrRoom');
+const MenuItem = require('../models/MenuItem');
+const DeviceToken = require('../models/DeviceToken');
+const Customer = require('../models/Customer');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Protect all routes
@@ -75,7 +79,11 @@ router.get('/orders', async (req, res) => {
       group.billRequested = group.billRequested || order.billRequested;
       if (!group.customerId && order.customerId) group.customerId = order.customerId;
       if (!group.waiterId && order.waiterId) group.waiterId = order.waiterId;
-      if (order.customerId?.name) group.customerNames.add(order.customerId.name);
+      if (order.customerId?.name) {
+        group.customerNames.add(order.customerId.name);
+      } else if (order.customerName) {
+        group.customerNames.add(order.customerName);
+      }
       group.subtotal += orderSnapshot.subtotal;
       group.discount += orderSnapshot.discount;
       group.adjustment += orderSnapshot.adjustment;
@@ -94,7 +102,7 @@ router.get('/orders', async (req, res) => {
       group.orderCount = group.orders.length;
       group.customerName = group.customerNames.size > 1
         ? 'Multiple guests'
-        : (Array.from(group.customerNames)[0] || 'Guest');
+        : (Array.from(group.customerNames)[0] || 'Guest User');
       group.items = group.orders.flatMap(order => order.items.map(item => ({
         ...item,
         sourceOrderId: order._id,
@@ -303,6 +311,185 @@ router.get('/sales-summary', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST /api/counter/orders - Place manual POS order from Counter or Reception
+router.post('/orders', async (req, res) => {
+  const { tableOrRoomId, tableName, items, customerName, customerMobile, specialInstructions, originAdminNotificationToken } = req.body;
+  const processMode = req.body.processMode === 'direct' ? 'direct' : 'kitchen';
+  try {
+    const restaurant = await Restaurant.findById(req.user.restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found' });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'At least one item is required to place an order.' });
+    }
+
+    let resolvedTable = null;
+    let resolvedTableName = tableName || 'Counter';
+
+    if (tableOrRoomId) {
+      resolvedTable = await TableOrRoom.findOne({ _id: tableOrRoomId, restaurantId: restaurant._id });
+      if (resolvedTable) {
+        resolvedTableName = resolvedTable.name;
+      }
+    }
+
+    if (!resolvedTable && tableName) {
+      resolvedTable = await TableOrRoom.findOne({ name: tableName, restaurantId: restaurant._id });
+    }
+
+    if (!resolvedTable) {
+      resolvedTable = await TableOrRoom.create({
+        restaurantId: restaurant._id,
+        name: resolvedTableName || 'Counter Walk-in',
+        type: 'Takeaway',
+        isActive: true
+      });
+    }
+
+    let subtotal = 0;
+    const compiledItems = [];
+
+    for (let item of items) {
+      const dbItem = await MenuItem.findOne({ _id: item.menuItemId, restaurantId: restaurant._id });
+      if (!dbItem) {
+        return res.status(400).json({ message: `Menu item with ID ${item.menuItemId} not found` });
+      }
+      if (!dbItem.inStock) {
+        return res.status(400).json({ message: `Item "${dbItem.name}" is out of stock` });
+      }
+
+      let itemPrice = dbItem.price;
+      if (item.variantName && dbItem.hasVariants && dbItem.variants && dbItem.variants.length > 0) {
+        const foundVariant = dbItem.variants.find(v => v.name === item.variantName);
+        if (foundVariant) {
+          itemPrice = foundVariant.price;
+        }
+      } else if (dbItem.hasVariants && dbItem.variants && dbItem.variants.length > 0) {
+        itemPrice = dbItem.variants[0].price;
+      }
+
+      const itemCost = itemPrice * (Number(item.quantity) || 1);
+      subtotal += itemCost;
+
+      compiledItems.push({
+        menuItemId: dbItem._id,
+        name: dbItem.name,
+        variantName: item.variantName || '',
+        price: itemPrice,
+        quantity: Number(item.quantity) || 1,
+        specialInstructions: item.specialInstructions || ''
+      });
+    }
+
+    const taxAmount = 0;
+    const totalAmount = subtotal;
+
+    let customerId = null;
+    const finalCustomerName = (customerName && customerName.trim()) ? customerName.trim() : 'Guest User';
+    const finalCustomerMobile = (customerMobile && customerMobile.trim()) ? customerMobile.trim() : '';
+
+    if (finalCustomerMobile) {
+      let cust = await Customer.findOne({ restaurantId: restaurant._id, mobile: finalCustomerMobile });
+      if (!cust) {
+        cust = await Customer.create({
+          restaurantId: restaurant._id,
+          name: finalCustomerName,
+          mobile: finalCustomerMobile
+        });
+      }
+      if (cust) customerId = cust._id;
+    }
+
+    const count = await Order.countDocuments({ restaurantId: restaurant._id });
+    const orderNumber = `ORD-CTR-${Date.now().toString().slice(-4)}-${count + 1}`;
+
+    const initialStatus = processMode === 'direct' ? 'Served' : 'New';
+    const now = new Date();
+    const newOrder = new Order({
+      restaurantId: restaurant._id,
+      tableOrRoomId: resolvedTable._id,
+      tableName: resolvedTableName,
+      items: compiledItems,
+      placedBy: 'counter',
+      processMode,
+      customerId,
+      customerName: finalCustomerName,
+      customerMobile: finalCustomerMobile,
+      subtotal,
+      taxAmount,
+      totalAmount,
+      status: initialStatus,
+      orderNumber,
+      source: resolvedTable.type === 'Room' ? 'reception' : (resolvedTable.type === 'Takeaway' ? 'takeaway' : 'counter'),
+      servedAt: processMode === 'direct' ? now : undefined,
+      servedBy: processMode === 'direct' ? 'Counter' : undefined,
+      statusTimeline: [{ status: initialStatus, timestamp: now }],
+      specialInstructions: specialInstructions || ''
+    });
+
+    const savedOrder = await newOrder.save();
+    if (customerId) await savedOrder.populate('customerId');
+
+    const io = req.app.get('io');
+    if (io) {
+      const restRoom = restaurant._id.toString();
+      if (processMode === 'direct') {
+        io.to(restRoom).emit('counterBillUpdated');
+      } else {
+        io.to(restRoom).emit('orderCreated', savedOrder);
+        io.to(restRoom).emit('new-order', savedOrder);
+        if (restaurant.features?.kitchenPanel !== false) {
+          io.to(`${restRoom}_kitchen`).emit('orderCreated', savedOrder);
+          io.to(`${restRoom}_kitchen`).emit('new-order', savedOrder);
+        }
+        if (restaurant.features?.waiterPanel !== false) {
+          io.to(`${restRoom}_waiter`).emit('orderCreated', savedOrder);
+          io.to(`${restRoom}_waiter`).emit('new-order', savedOrder);
+        }
+      }
+    }
+
+    if (processMode === 'kitchen') {
+      // Notify kitchen/staff, while excluding this device's admin token if it
+      // has one. A Counter PWA may share a browser with an older Admin PWA token.
+      const { notifyRestaurantRoles } = require('../utils/firebase');
+      let originAdminDevice = null;
+      if (originAdminNotificationToken) {
+        try {
+          originAdminDevice = await DeviceToken.findOne({
+            token: originAdminNotificationToken,
+            restaurantId: restaurant._id,
+            $or: [{ role: 'restaurantadmin' }, { roles: 'restaurantadmin' }]
+          }).select('token');
+        } catch (error) {
+          console.error('Could not identify the counter origin notification token:', error);
+        }
+      }
+      const notifyRoles = ['restaurantadmin'];
+      if (restaurant.features?.kitchenPanel !== false) notifyRoles.push('kitchen');
+    notifyRestaurantRoles(
+      restaurant._id,
+      notifyRoles,
+      `New Counter Order - ${restaurant.name || 'Restaurant'}`,
+      `${resolvedTableName} | Order ${savedOrder.orderNumber} | ${compiledItems.length} items | ₹${savedOrder.totalAmount}`,
+      {
+        orderId: savedOrder._id.toString(),
+        type: 'new_order',
+        restaurantSlug: restaurant.slug
+      },
+      { excludeTokens: originAdminDevice ? [originAdminDevice.token] : [] }
+    ).catch(err => console.error('Error triggering counter order FCM:', err));
+    }
+
+    res.status(201).json(savedOrder);
+  } catch (error) {
+    console.error('Failed to create counter order:', error);
+    res.status(500).json({ message: 'Server error placing counter order', error: error.message });
   }
 });
 

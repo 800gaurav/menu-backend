@@ -144,7 +144,7 @@ router.put('/branding', async (req, res) => {
       pwaName: pwaName !== undefined ? pwaName : restaurant.brandingSettings.pwaName,
       pageTitle: pageTitle !== undefined ? pageTitle : restaurant.brandingSettings.pageTitle,
       footerText: footerText !== undefined ? footerText : restaurant.brandingSettings.footerText,
-      menuItemLayout: menuItemLayout !== undefined ? menuItemLayout : restaurant.brandingSettings.menuItemLayout,
+      menuItemLayout: menuItemLayout !== undefined ? menuItemLayout : (restaurant.brandingSettings.menuItemLayout || 'list'),
       showGoogleReview: showGoogleReview !== undefined ? showGoogleReview : restaurant.brandingSettings.showGoogleReview,
       showInstagram: showInstagram !== undefined ? showInstagram : restaurant.brandingSettings.showInstagram,
       showFacebook: showFacebook !== undefined ? showFacebook : restaurant.brandingSettings.showFacebook,

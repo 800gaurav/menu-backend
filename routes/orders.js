@@ -73,25 +73,20 @@ router.get('/', async (req, res) => {
     const andConditions = [];
     
     if (history === 'true') {
-      if (status === 'Completed') {
-        andConditions.push({ $or: [{ status: 'Completed' }, { paymentStatus: 'Paid' }] });
-      } else if (status === 'Cancelled') {
-        andConditions.push({ status: 'Cancelled' });
-      } else {
-        andConditions.push({
-          $or: [
-            { status: 'Completed' },
-            { paymentStatus: 'Paid' },
-            { status: 'Cancelled' }
-          ]
-        });
-      }
+      andConditions.push({
+        status: { $ne: 'Cancelled' },
+        $or: [{ status: 'Completed' }, { paymentStatus: 'Paid' }]
+      });
     } else if (status && status !== 'all') {
       if (status.includes(',')) {
         query.status = { $in: status.split(',').map(s => s.trim()) };
       } else {
         query.status = status;
       }
+    }
+
+    if (live === 'true') {
+      query.processMode = { $ne: 'direct' };
     }
 
     if (table && table !== 'all') {
@@ -147,7 +142,9 @@ router.get('/', async (req, res) => {
 
       const searchOr = [
         { orderNumber: searchRegex },
-        { tableName: searchRegex }
+        { tableName: searchRegex },
+        { customerName: searchRegex },
+        { customerMobile: searchRegex }
       ];
       if (customerIds.length > 0) {
         searchOr.push({ customerId: { $in: customerIds } });
@@ -233,19 +230,10 @@ router.get('/export', async (req, res) => {
     const andConditions = [];
 
     if (history === 'true') {
-      if (status === 'Completed') {
-        andConditions.push({ $or: [{ status: 'Completed' }, { paymentStatus: 'Paid' }] });
-      } else if (status === 'Cancelled') {
-        andConditions.push({ status: 'Cancelled' });
-      } else {
-        andConditions.push({
-          $or: [
-            { status: 'Completed' },
-            { paymentStatus: 'Paid' },
-            { status: 'Cancelled' }
-          ]
-        });
-      }
+      andConditions.push({
+        status: { $ne: 'Cancelled' },
+        $or: [{ status: 'Completed' }, { paymentStatus: 'Paid' }]
+      });
     } else if (status && status !== 'all') {
       if (status.includes(',')) {
         query.status = { $in: status.split(',').map(s => s.trim()) };
@@ -295,7 +283,9 @@ router.get('/export', async (req, res) => {
 
       const searchOr = [
         { orderNumber: searchRegex },
-        { tableName: searchRegex }
+        { tableName: searchRegex },
+        { customerName: searchRegex },
+        { customerMobile: searchRegex }
       ];
       if (customerIds.length > 0) {
         searchOr.push({ customerId: { $in: customerIds } });
@@ -523,7 +513,11 @@ router.patch('/:id/bill-request', async (req, res) => {
       ['restaurantadmin', 'counter'],
       'Bill Requested!',
       `Table ${order.tableName} has requested their bill for ₹${order.totalAmount}.`,
-      { orderId: order._id.toString(), type: 'bill_request' }
+      {
+        orderId: order._id.toString(),
+        type: 'bill_request',
+        restaurantSlug: req.restaurant?.slug
+      }
     ).catch(err => console.error('Error bill request FCM:', err));
 
     res.json(order);

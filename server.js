@@ -4,11 +4,23 @@ const socketIo = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+const dns = require('node:dns');
 const dotenv = require('dotenv');
 const Restaurant = require('./models/Restaurant');
 
 // Load environment variables
 dotenv.config();
+
+// Some local DNS proxies refuse the SRV lookups required by mongodb+srv URIs.
+// Allow an environment-specific resolver override without changing production
+// defaults or the Atlas connection string.
+const mongoDnsServers = (process.env.MONGODB_DNS_SERVERS || '')
+  .split(',')
+  .map(serverAddress => serverAddress.trim())
+  .filter(Boolean);
+if (mongoDnsServers.length > 0) {
+  dns.setServers(mongoDnsServers);
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -23,8 +35,11 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded images statically
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded images statically with browser caching
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  maxAge: '7d',
+  immutable: true
+}));
 
 // Connect to MongoDB
 const requiredEnv = ['MONGODB_URI', 'JWT_SECRET', 'CLIENT_HOST', 'WAITER_HOST', 'STAFF_HOST', 'BACKEND_URL'];

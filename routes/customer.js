@@ -315,9 +315,6 @@ router.post('/orders', async (req, res) => {
     if (restaurant.features?.kitchenPanel !== false) {
       notifyRoles.push('kitchen');
     }
-    if (restaurant.features?.waiterPanel !== false) {
-      notifyRoles.push('waiter');
-    }
     notifyRestaurantRoles(
       restaurant._id,
       notifyRoles,

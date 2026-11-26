@@ -10,6 +10,7 @@ router.use(authenticate);
 // Staff roles that can read menu items & categories
 const staffRoles = ['restaurantadmin', 'waiter', 'kitchen', 'counter'];
 const adminOnly = ['restaurantadmin'];
+const productEditors = ['restaurantadmin', 'counter'];
 
 // --- Categories Routes ---
 
@@ -23,7 +24,6 @@ router.get('/categories', authorize(staffRoles), async (req, res) => {
   }
 });
 
-// POST /api/menu/categories (Admin only)
 router.post('/categories', authorize(adminOnly), async (req, res) => {
   const { name, icon, isHidden } = req.body;
   try {
@@ -109,8 +109,7 @@ router.get('/items', authorize(staffRoles), async (req, res) => {
   }
 });
 
-// POST /api/menu/items (Admin only)
-router.post('/items', authorize(adminOnly), async (req, res) => {
+router.post('/items', authorize(productEditors), async (req, res) => {
   const { name, description, price, image, categoryId, tags, inStock, badges, hasVariants, variants, addons } = req.body;
   try {
     // Validate category exists for this restaurant
@@ -145,7 +144,7 @@ router.post('/items', authorize(adminOnly), async (req, res) => {
 });
 
 // PUT /api/menu/items/:id (Admin only)
-router.put('/items/:id', authorize(adminOnly), async (req, res) => {
+router.put('/items/:id', authorize(productEditors), async (req, res) => {
   const { name, description, price, image, categoryId, tags, inStock, badges, hasVariants, variants, addons } = req.body;
   try {
     const item = await MenuItem.findOne({ _id: req.params.id, restaurantId: req.user.restaurantId });

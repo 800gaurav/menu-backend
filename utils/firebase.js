@@ -105,7 +105,7 @@ const sendPushNotification = async (tokens, title, body, data = {}) => {
   }
 };
 
-const notifyRestaurantRoles = async (restaurantId, roles, title, body, data = {}) => {
+const notifyRestaurantRoles = async (restaurantId, roles, title, body, data = {}, options = {}) => {
   try {
     const DeviceToken = require('../models/DeviceToken');
     const roleList = Array.isArray(roles) ? roles : [roles];
@@ -116,10 +116,26 @@ const notifyRestaurantRoles = async (restaurantId, roles, title, body, data = {}
         { roles: { $in: roleList } }
       ]
     });
-    const tokens = [...new Set(devTokens.map(dt => dt.token).filter(Boolean))];
-    if (tokens.length > 0) {
-      await sendPushNotification(tokens, title, body, data);
-    }
+    const excludedTokens = new Set(options.excludeTokens || []);
+    const targetRoleByToken = new Map();
+    devTokens.forEach(device => {
+      if (!device.token || excludedTokens.has(device.token)) return;
+      const deviceRoles = new Set([...(device.roles || []), device.role].filter(Boolean));
+      const disabledRoles = new Set(device.disabledRoles || []);
+      const targetRole = roleList.find(role => deviceRoles.has(role) && !disabledRoles.has(role));
+      if (targetRole && !targetRoleByToken.has(device.token)) {
+        targetRoleByToken.set(device.token, targetRole);
+      }
+    });
+
+    const tokensByRole = new Map();
+    targetRoleByToken.forEach((role, token) => {
+      if (!tokensByRole.has(role)) tokensByRole.set(role, []);
+      tokensByRole.get(role).push(token);
+    });
+    await Promise.all([...tokensByRole].map(([role, tokens]) =>
+      sendPushNotification(tokens, title, body, { ...data, targetRole: role })
+    ));
   } catch (error) {
     console.error(`Error notifying restaurant roles ${roles}:`, error);
   }

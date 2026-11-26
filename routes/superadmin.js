@@ -206,7 +206,7 @@ router.get('/restaurants', async (req, res) => {
 
 // POST /api/superadmin/restaurants
 router.post('/restaurants', async (req, res) => {
-  const { name, slug, email, mobile, planId, features, endDate } = req.body;
+  const { name, slug, email, mobile, password, planId, features, endDate } = req.body;
   try {
     const existingRestaurant = await Restaurant.findOne({ slug });
     if (existingRestaurant) return res.status(400).json({ message: 'Restaurant slug already exists' });
@@ -221,7 +221,7 @@ router.post('/restaurants', async (req, res) => {
 
     const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-_]/g, '');
     const generatedUsername = `${cleanSlug}_admin`;
-    const generatedPassword = Math.random().toString(36).slice(-8);
+    const finalPassword = (password && String(password).trim()) ? String(password).trim() : Math.random().toString(36).slice(-8);
 
     const newRestaurant = new Restaurant({
       name,
@@ -237,12 +237,12 @@ router.post('/restaurants', async (req, res) => {
     }
     const savedRestaurant = await newRestaurant.save();
 
-    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+    const hashedPassword = await bcrypt.hash(finalPassword, 10);
     const newAdmin = new RestaurantAdmin({
       restaurantId: savedRestaurant._id,
       username: generatedUsername,
       password: hashedPassword,
-      plainPassword: generatedPassword,
+      plainPassword: finalPassword,
       mobile: mobile || '',
       isOnboarded: true
     });
@@ -250,7 +250,7 @@ router.post('/restaurants', async (req, res) => {
 
     res.status(201).json({
       restaurant: savedRestaurant,
-      credentials: { username: generatedUsername, password: generatedPassword }
+      credentials: { username: generatedUsername, password: finalPassword }
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

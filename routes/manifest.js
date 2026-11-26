@@ -4,7 +4,7 @@ const Restaurant = require('../models/Restaurant');
 const backendUrl = process.env.BACKEND_URL;
 
 // Helper to construct dynamic manifests with guaranteed valid PNG icons
-const buildManifest = ({ name, shortName, desc, startUrl, logo, themeColor, bgColor, origin, iconPath, icon192Path }) => {
+const buildManifest = ({ name, shortName, desc, startUrl, scope, logo, themeColor, bgColor, origin, iconPath, icon192Path }) => {
   const absoluteLogo = logo 
     ? (logo.startsWith('http') ? logo : `${backendUrl}${logo.startsWith('/') ? '' : '/'}${logo}`)
     : null;
@@ -41,12 +41,13 @@ const buildManifest = ({ name, shortName, desc, startUrl, logo, themeColor, bgCo
     ? startUrl 
     : `${origin}${startUrl.startsWith('/') ? '' : '/'}${startUrl}`;
 
-  // Scope should envelop startUrl
-  const scopeUrl = resolvedStartUrl;
+  const resolvedScope = scope
+    ? (scope.startsWith('http') ? scope : `${origin}${scope.startsWith('/') ? '' : '/'}${scope}`)
+    : resolvedStartUrl;
 
   return {
     id: resolvedStartUrl,
-    scope: scopeUrl,
+    scope: resolvedScope,
     name,
     short_name: shortName,
     description: desc,
@@ -190,19 +191,20 @@ router.get('/:slug/counter', async (req, res) => {
 
     const name = restaurant.brandingSettings?.counterAppName || `${restaurant.name} Cashier`;
     const logo = restaurant.logo; // Always use the main restaurant logo
-    const themeColor = restaurant.brandColor || '#0d1117';
+    const themeColor = restaurant.brandColor || '#003b1b';
     const requestOrigin = req.query.origin || process.env.STAFF_HOST;
 
     const manifest = buildManifest({
       name,
       shortName: name,
       desc: `POS Billing terminal for ${restaurant.name}`,
-      startUrl: `/counter/${restaurant.slug}`,
+      startUrl: `/admin/counter/${restaurant.slug}/`,
+      scope: `/admin/counter/${restaurant.slug}/`,
       logo,
       themeColor,
-      bgColor: '#0d1117',
+      bgColor: '#ffffff',
       origin: requestOrigin,
-      iconPath: '/admin/icon-512.png',
+      iconPath: '/admin/icon-counter-512.png',
       icon192Path: '/admin/icon-192.png'
     });
 
